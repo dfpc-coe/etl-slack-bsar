@@ -1,5 +1,5 @@
 {
-    "name": "coe-etl-template",
+    "name": "etl-slack-bsar",
     "type": "module",
     "prviate": true,
     "version": "1.0.0",
@@ -14,12 +14,13 @@
     "license": "ISC",
     "devDependencies": {
         "@eslint/js": "^10.0.0",
+        "@types/aws-lambda": "^8.10.163",
         "eslint": "^10.0.0",
         "typescript": "^6.0.0",
         "typescript-eslint": "^8.0.0"
     },
     "dependencies": {
         "@sinclair/typebox": "^0.34.0",
-        "@tak-ps/etl": "^10.0.0"
+        "@tak-ps/etl": "^10.20.0"
     }
 }

@@ -1,65 +1,260 @@
 import type { Static, TSchema } from '@sinclair/typebox';
 import { Type } from '@sinclair/typebox';
+import type Lambda from 'aws-lambda';
 import type { Event } from '@tak-ps/etl';
-import { Feature } from '@tak-ps/node-cot'
-import ETL, { SchemaType, handler as internal, local, DataFlowType, InvocationType } from '@tak-ps/etl';
+import ETL, { SchemaType, handler as internal, local, fetch, DataFlowType, OutgoingMessageType, OutgoingAction } from '@tak-ps/etl';
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars --  Fetch with an additional Response.typed(TypeBox Object) definition
-import { fetch } from '@tak-ps/etl';
+const SLACK_API = 'https://slack.com/api';
 
-/**
- * The Input Schema contains the environment object that will be requested via the CloudTAK UI
- * It should be a valid TypeBox object - https://github.com/sinclairzx81/typebox
- */
-const InputSchema = Type.Object({
+const OutgoingInput = Type.Object({
+    'SLACK_TOKEN': Type.String({
+        description: 'Slack Bot User OAuth Token (xoxb-...) - requires channels:manage, groups:write & chat:write scopes'
+    }),
+    'SLACK_PRIVATE': Type.Boolean({
+        default: false,
+        description: 'Create private channels instead of public ones'
+    }),
+    'SLACK_PREFIX': Type.String({
+        default: 'sar',
+        description: 'Prefix of created channel names - ie: sar-2026-09-21-lost-hiker'
+    }),
+    'SLACK_INVITE': Type.Array(Type.Object({
+        user: Type.String({ description: 'Slack User ID - ie: U012AB3CD' })
+    }), {
+        default: [],
+        description: 'Slack Users invited to every created channel'
+    }),
+    'BOARD': Type.String({
+        description: 'ID of the CoreEvent Board to watch for newly placed Events'
+    }),
+    'SAR_TYPES': Type.Array(Type.Object({
+        type: Type.String({ description: 'MIL-STD-2525E Symbol ID' })
+    }), {
+        default: [],
+        description: 'CoreEvent types considered SAR - any Event placed on the Board is accepted if empty'
+    }),
     'DEBUG': Type.Boolean({
         default: false,
         description: 'Print results in logs'
     })
 });
 
-/**
- * The Output Schema contains the known properties that will be returned on the
- * GeoJSON Feature in the .properties.metdata object
- */
-const OutputSchema = Type.Object({})
+// CoreEvent ID => Slack Channel ID, so SQS redelivery or re-placing an Event doesn't create a second channel
+const EphemeralStore = Type.Object({
+    channels: Type.Optional(Type.Record(Type.String(), Type.String()))
+});
+
+// Subset of CloudTAK's CoreEventBoardEventResponse this task relies on
+const Placement = Type.Object({
+    id: Type.String(),
+    board: Type.String(),
+    event: Type.Object({
+        id: Type.String(),
+        name: Type.String(),
+        type: Type.String(),
+        created: Type.String(),
+        priority: Type.Optional(Type.String()),
+        location: Type.Optional(Type.String()),
+        remarks: Type.Optional(Type.String()),
+        geometry: Type.Object({
+            type: Type.Literal('Point'),
+            coordinates: Type.Array(Type.Number())
+        })
+    })
+});
+
+const SlackChannel = Type.Object({
+    ok: Type.Boolean(),
+    error: Type.Optional(Type.String()),
+    channel: Type.Optional(Type.Object({
+        id: Type.String(),
+        name: Type.String()
+    }))
+});
+
+const SlackAuth = Type.Object({
+    ok: Type.Boolean(),
+    error: Type.Optional(Type.String()),
+    url: Type.Optional(Type.String({ description: 'Workspace URL - ie: https://example.slack.com/' }))
+});
+
+const CoreEventLinks = Type.Object({
+    links: Type.Array(Type.Object({
+        name: Type.String(),
+        url: Type.String()
+    }))
+});
+
+const SlackResponse = Type.Object({
+    ok: Type.Boolean(),
+    error: Type.Optional(Type.String())
+});
 
 export default class Task extends ETL {
-    static name = 'default'
-    static flow = [ DataFlowType.Incoming ];
-    static invocation = [ InvocationType.Schedule ];
+    static name = 'etl-slack-bsar'
+    static flow = [ DataFlowType.Outgoing ];
 
     async schema(
         type: SchemaType = SchemaType.Input,
-        flow: DataFlowType = DataFlowType.Incoming
+        flow: DataFlowType = DataFlowType.Outgoing
     ): Promise<TSchema> {
-        if (flow === DataFlowType.Incoming) {
-            if (type === SchemaType.Input) {
-                return InputSchema;
-            } else {
-                return OutputSchema;
-            }
+        if (flow === DataFlowType.Outgoing && type === SchemaType.Input) {
+            return OutgoingInput;
         } else {
             return Type.Object({});
         }
     }
 
-    async control(): Promise<void> {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Get the Environment from the Server and ensure it conforms to the schema
-        const env = await this.env(InputSchema);
+    async outgoing(event: Lambda.SQSEvent): Promise<boolean> {
+        const env = await this.env(OutgoingInput, DataFlowType.Outgoing);
+        const ephem = await this.ephemeral(EphemeralStore, DataFlowType.Outgoing);
+        const channels = ephem.channels || {};
 
-        const features: Static<typeof Feature.InputFeature>[] = [];
+        const types = new Set(env.SAR_TYPES.map((t) => t.type));
 
-        // Get things here and convert them to GeoJSON Feature Collections
-        // That conform to the node-cot Feature properties spec
-        // https://github.com/dfpc-coe/node-CoT/
+        let created = 0;
 
-        const fc: Static<typeof Feature.InputFeatureCollection> = {
-            type: 'FeatureCollection',
-            features: features
+        for (const message of Task.outgoingMessages(event)) {
+            if (message.type !== OutgoingMessageType.BoardEvent || message.action !== OutgoingAction.Create) continue;
+
+            const placement = this.type(Placement, message.data);
+
+            if (placement.board !== env.BOARD) continue;
+            if (types.size && !types.has(placement.event.type)) continue;
+            if (channels[placement.event.id]) continue;
+
+            if (env.DEBUG) console.log(`ok - creating channel for ${placement.event.id}: ${placement.event.name}`);
+
+            const channel = await this.createChannel(env, placement.event);
+            channels[placement.event.id] = channel.id;
+            created++;
+
+            await this.announce(env, channel.id, placement.event);
+
+            try {
+                await this.link(env, placement.event.id, channel);
+            } catch (err) {
+                console.error(`not ok - failed to link Slack channel to CoreEvent ${placement.event.id}:`, err);
+            }
         }
 
-        await this.submit(fc);
+        if (created) await this.setEphemeral({ channels }, DataFlowType.Outgoing);
+
+        return true;
+    }
+
+    /** Slack channel names are lowercase alphanumerics, hyphens & underscores up to 80 chars */
+    channelName(prefix: string, event: Static<typeof Placement>['event'], suffix = ''): string {
+        const slug = event.name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '');
+
+        return [prefix, event.created.slice(0, 10), slug]
+            .filter(Boolean)
+            .join('-')
+            .slice(0, 80 - suffix.length) + suffix;
+    }
+
+    async createChannel(
+        env: Static<typeof OutgoingInput>,
+        event: Static<typeof Placement>['event']
+    ): Promise<{ id: string, name: string }> {
+        let res = await this.slack(env, 'conversations.create', SlackChannel, {
+            name: this.channelName(env.SLACK_PREFIX, event),
+            is_private: env.SLACK_PRIVATE
+        });
+
+        if (res.error === 'name_taken') {
+            res = await this.slack(env, 'conversations.create', SlackChannel, {
+                name: this.channelName(env.SLACK_PREFIX, event, `-${event.id.slice(0, 6)}`),
+                is_private: env.SLACK_PRIVATE
+            });
+        }
+
+        if (!res.ok || !res.channel) throw new Error(`Slack conversations.create: ${res.error}`);
+
+        if (env.SLACK_INVITE.length) {
+            const invite = await this.slack(env, 'conversations.invite', SlackResponse, {
+                channel: res.channel.id,
+                users: env.SLACK_INVITE.map((u) => u.user).join(',')
+            });
+
+            if (!invite.ok) console.error(`not ok - Slack conversations.invite: ${invite.error}`);
+        }
+
+        return res.channel;
+    }
+
+    async announce(
+        env: Static<typeof OutgoingInput>,
+        channel: string,
+        event: Static<typeof Placement>['event']
+    ): Promise<void> {
+        const [lng, lat] = event.geometry.coordinates;
+
+        const lines = [
+            `*${event.name}*`,
+            event.priority ? `Priority: ${event.priority}` : null,
+            event.location ? `Location: ${event.location}` : null,
+            `Coordinates: ${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+            event.remarks || null
+        ].filter(Boolean);
+
+        const topic = await this.slack(env, 'conversations.setTopic', SlackResponse, {
+            channel,
+            topic: event.name.slice(0, 250)
+        });
+        if (!topic.ok) console.error(`not ok - Slack conversations.setTopic: ${topic.error}`);
+
+        const post = await this.slack(env, 'chat.postMessage', SlackResponse, {
+            channel,
+            text: lines.join('\n')
+        });
+        if (!post.ok) console.error(`not ok - Slack chat.postMessage: ${post.error}`);
+    }
+
+    /** PATCH replaces the links array, so append to the current links of the CoreEvent */
+    async link(
+        env: Static<typeof OutgoingInput>,
+        event: string,
+        channel: { id: string, name: string }
+    ): Promise<void> {
+        const auth = await this.slack(env, 'auth.test', SlackAuth, {});
+        if (!auth.ok || !auth.url) throw new Error(`Slack auth.test: ${auth.error}`);
+
+        const url = new URL(`/archives/${channel.id}`, auth.url).toString();
+
+        const current = this.type(CoreEventLinks, await this.fetch(`/api/core/event/${event}`));
+        if (current.links.some((l) => l.url === url)) return;
+
+        await this.fetch(`/api/core/event/${event}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                links: [...current.links, { name: `Slack: #${channel.name}`, url }]
+            })
+        });
+    }
+
+    async slack<T extends TSchema>(
+        env: Static<typeof OutgoingInput>,
+        method: string,
+        schema: T,
+        body: Record<string, unknown>
+    ): Promise<Static<T>> {
+        const res = await fetch(`${SLACK_API}/${method}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${env.SLACK_TOKEN}`,
+                'Content-Type': 'application/json; charset=utf-8'
+            },
+            body: JSON.stringify(body)
+        });
+
+        return await res.typed(schema);
     }
 }
 
@@ -67,4 +262,3 @@ await local(await Task.init(import.meta.url), import.meta.url);
 export async function handler(event: Event = {}) {
     return await internal(new Task(import.meta.url), event);
 }
-

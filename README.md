@@ -1,6 +1,29 @@
-<h1 align='center'>ETL-Template</h1>
+<h1 align='center'>ETL-Slack-BSAR</h1>
 
-<p align='center'>Template Repository for creating new ETLs</p>
+<p align='center'>Create a Slack channel for every SAR CoreEvent placed on a CloudTAK Board</p>
+
+## Flow
+
+This is an Outgoing only task subscribed to `board:event:create`. When a CoreEvent is placed on the
+configured Board, and its type is one of the configured SAR types, a Slack channel named
+`<prefix>-<date>-<event name>` is created, the configured users are invited, and the Event details are posted.
+
+The URL of the created channel is then appended to the `links` of the CoreEvent.
+
+Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so an Event never gets a second channel.
+
+| Permission | Required | Description |
+| ---------- | -------- | ----------- |
+| `event:read`, `event:update` | No | Append the Slack channel URL to the links of the CoreEvent |
+
+| Environment | Description |
+| ----------- | ----------- |
+| `SLACK_TOKEN` | Slack Bot User OAuth Token (`xoxb-`) with `channels:manage`, `groups:write` & `chat:write` scopes |
+| `SLACK_PRIVATE` | Create private channels instead of public ones |
+| `SLACK_PREFIX` | Prefix of created channel names |
+| `SLACK_INVITE` | Slack User IDs invited to every created channel |
+| `BOARD` | ID of the CoreEvent Board to watch |
+| `SAR_TYPES` | MIL-STD-2525E Symbol IDs considered SAR - every Event placed on the Board is accepted if empty |
 
 ## Development
 
