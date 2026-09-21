@@ -12,6 +12,10 @@
 
 ### Pending Release
 
+### v1.1.1
+
+- :rocket: Add Capabilities doc
+
 ### v1.1.0
 
 - :rocket: Build & push via `cloudtak-etl` so `capabilities.json` is annotated onto the OCI manifest

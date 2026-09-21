@@ -1,0 +1,31 @@
+{
+    "version": "1.0",
+    "name": "Slack BSAR",
+    "description": "Creates a Slack channel for every SAR CoreEvent placed on a configured CoreEvent Board.",
+    "compute": {
+        "memory": 256,
+        "timeout": 60
+    },
+    "permissions": [
+        {
+            "resource": "event:read",
+            "required": false,
+            "description": "Reads the current links of a CoreEvent so the Slack channel link is appended instead of replacing them"
+        },
+        {
+            "resource": "event:update",
+            "required": false,
+            "description": "Adds the URL of the created Slack channel to the links of the CoreEvent"
+        }
+    ],
+    "invocations": {
+        "outgoing": {
+            "types": [
+                {
+                    "resource": "board:event:create",
+                    "description": "Creates a Slack channel when a SAR CoreEvent is first placed on the configured Board"
+                }
+            ]
+        }
+    }
+}
