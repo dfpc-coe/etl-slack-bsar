@@ -112,18 +112,40 @@ export default class Task extends ETL {
 
         const types = new Set(env.SAR_TYPES.map((t) => t.type));
 
+        const debug = (msg: string) => {
+            if (env.DEBUG) console.log(`ok - debug - ${msg}`);
+        };
+
+        debug(`board=${env.BOARD} sar_types=[${[...types].join(',')}] known_channels=${Object.keys(channels).length} records=${event.Records.length}`);
+
         let created = 0;
 
         for (const message of Task.outgoingMessages(event)) {
-            if (message.type !== OutgoingMessageType.BoardEvent || message.action !== OutgoingAction.Create) continue;
+            if (message.type !== OutgoingMessageType.BoardEvent || message.action !== OutgoingAction.Create) {
+                debug(`skip - message ${message.type}:${'action' in message ? message.action : '-'} is not ${OutgoingMessageType.BoardEvent}:${OutgoingAction.Create}`);
+                continue;
+            }
 
             const placement = this.type(Placement, message.data);
 
-            if (placement.board !== env.BOARD) continue;
-            if (types.size && !types.has(placement.event.type)) continue;
-            if (channels[placement.event.id]) continue;
+            debug(`placement ${placement.id} board=${placement.board} event=${placement.event.id} type=${placement.event.type} name=${placement.event.name}`);
 
-            if (env.DEBUG) console.log(`ok - creating channel for ${placement.event.id}: ${placement.event.name}`);
+            if (placement.board !== env.BOARD) {
+                debug(`skip - board ${placement.board} does not match ${env.BOARD}`);
+                continue;
+            }
+
+            if (types.size && !types.has(placement.event.type)) {
+                debug(`skip - type ${placement.event.type} is not in SAR_TYPES`);
+                continue;
+            }
+
+            if (channels[placement.event.id]) {
+                debug(`skip - event ${placement.event.id} already has channel ${channels[placement.event.id]}`);
+                continue;
+            }
+
+            debug(`creating channel for ${placement.event.id}: ${placement.event.name}`);
 
             const channel = await this.createChannel(env, placement.event);
             channels[placement.event.id] = channel.id;
@@ -139,6 +161,8 @@ export default class Task extends ETL {
         }
 
         if (created) await this.setEphemeral({ channels }, DataFlowType.Outgoing);
+
+        debug(`created ${created} channel(s)`);
 
         return true;
     }

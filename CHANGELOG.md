@@ -12,6 +12,10 @@
 
 ### Pending Release
 
+### v1.1.2
+
+- :rocket: Log why each outgoing message is skipped when `DEBUG` is enabled
+
 ### v1.1.1
 
 - :rocket: Add Capabilities doc
