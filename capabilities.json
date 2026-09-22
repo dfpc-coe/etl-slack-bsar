@@ -23,7 +23,11 @@
             "types": [
                 {
                     "resource": "board:event:create",
-                    "description": "Creates a Slack channel when a SAR CoreEvent is first placed on the configured Board"
+                    "description": "Creates a Slack channel when a SAR CoreEvent is first placed on the configured Board, unarchiving it if it already exists"
+                },
+                {
+                    "resource": "board:event:update",
+                    "description": "Unarchives the Slack channel of a SAR CoreEvent when it is moved on the configured Board"
                 }
             ]
         }

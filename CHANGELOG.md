@@ -12,6 +12,11 @@
 
 ### Pending Release
 
+### v1.2.0
+
+- :tada: Unarchive the Slack channel of a re-created or updated CoreEvent instead of skipping it, reusing a channel of the same name when the ephemeral store was reset
+- :rocket: Subscribe to `board:event:update` so moving an Event on the Board also revives its channel
+
 ### v1.1.2
 
 - :rocket: Log why each outgoing message is skipped when `DEBUG` is enabled

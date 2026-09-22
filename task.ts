@@ -8,7 +8,7 @@ const SLACK_API = 'https://slack.com/api';
 
 const OutgoingInput = Type.Object({
     'SLACK_TOKEN': Type.String({
-        description: 'Slack Bot User OAuth Token (xoxb-...) - requires channels:manage, groups:write & chat:write scopes'
+        description: 'Slack Bot User OAuth Token (xoxb-...) - requires channels:manage, channels:read, groups:write, groups:read & chat:write scopes'
     }),
     'SLACK_PRIVATE': Type.Boolean({
         default: false,
@@ -63,12 +63,24 @@ const Placement = Type.Object({
     })
 });
 
+const SlackChannelInfo = Type.Object({
+    id: Type.String(),
+    name: Type.String(),
+    is_archived: Type.Optional(Type.Boolean())
+});
+
 const SlackChannel = Type.Object({
     ok: Type.Boolean(),
     error: Type.Optional(Type.String()),
-    channel: Type.Optional(Type.Object({
-        id: Type.String(),
-        name: Type.String()
+    channel: Type.Optional(SlackChannelInfo)
+});
+
+const SlackChannelList = Type.Object({
+    ok: Type.Boolean(),
+    error: Type.Optional(Type.String()),
+    channels: Type.Optional(Type.Array(SlackChannelInfo)),
+    response_metadata: Type.Optional(Type.Object({
+        next_cursor: Type.Optional(Type.String())
     }))
 });
 
@@ -118,11 +130,15 @@ export default class Task extends ETL {
 
         debug(`board=${env.BOARD} sar_types=[${[...types].join(',')}] known_channels=${Object.keys(channels).length} records=${event.Records.length}`);
 
+        let changed = false;
         let created = 0;
 
         for (const message of Task.outgoingMessages(event)) {
-            if (message.type !== OutgoingMessageType.BoardEvent || message.action !== OutgoingAction.Create) {
-                debug(`skip - message ${message.type}:${'action' in message ? message.action : '-'} is not ${OutgoingMessageType.BoardEvent}:${OutgoingAction.Create}`);
+            if (
+                message.type !== OutgoingMessageType.BoardEvent
+                || (message.action !== OutgoingAction.Create && message.action !== OutgoingAction.Update)
+            ) {
+                debug(`skip - message ${message.type}:${'action' in message ? message.action : '-'} is not a ${OutgoingMessageType.BoardEvent} create or update`);
                 continue;
             }
 
@@ -140,8 +156,23 @@ export default class Task extends ETL {
                 continue;
             }
 
-            if (channels[placement.event.id]) {
-                debug(`skip - event ${placement.event.id} already has channel ${channels[placement.event.id]}`);
+            const known = channels[placement.event.id];
+            if (known) {
+                const state = await this.ensureActive(env, known);
+                debug(`event ${placement.event.id} already has channel ${known}: ${state}`);
+
+                if (state === 'unarchived') {
+                    await this.announce(env, known, placement.event);
+                }
+
+                if (state !== 'missing') continue;
+
+                delete channels[placement.event.id];
+                changed = true;
+            }
+
+            if (message.action === OutgoingAction.Update) {
+                debug(`skip - event ${placement.event.id} updated but has no channel`);
                 continue;
             }
 
@@ -149,6 +180,7 @@ export default class Task extends ETL {
 
             const channel = await this.createChannel(env, placement.event);
             channels[placement.event.id] = channel.id;
+            changed = true;
             created++;
 
             await this.announce(env, channel.id, placement.event);
@@ -160,7 +192,7 @@ export default class Task extends ETL {
             }
         }
 
-        if (created) await this.setEphemeral({ channels }, DataFlowType.Outgoing);
+        if (changed) await this.setEphemeral({ channels }, DataFlowType.Outgoing);
 
         debug(`created ${created} channel(s)`);
 
@@ -180,16 +212,71 @@ export default class Task extends ETL {
             .slice(0, 80 - suffix.length) + suffix;
     }
 
+    /**
+     * Ensure a known channel is usable - unarchiving it if a previous incident
+     * closed it out. Returns `missing` if Slack no longer knows the channel
+     */
+    async ensureActive(
+        env: Static<typeof OutgoingInput>,
+        channel: string
+    ): Promise<'active' | 'unarchived' | 'missing'> {
+        const info = await this.slack(env, 'conversations.info', SlackChannel, { channel });
+
+        if (info.error === 'channel_not_found') return 'missing';
+        if (!info.ok || !info.channel) throw new Error(`Slack conversations.info: ${info.error}`);
+        if (!info.channel.is_archived) return 'active';
+
+        const res = await this.slack(env, 'conversations.unarchive', SlackResponse, { channel });
+        if (!res.ok && res.error !== 'not_archived') throw new Error(`Slack conversations.unarchive: ${res.error}`);
+
+        return 'unarchived';
+    }
+
+    /** Look up a channel by name so a re-created incident reuses its channel when the ephemeral store was reset */
+    async findChannel(
+        env: Static<typeof OutgoingInput>,
+        name: string
+    ): Promise<Static<typeof SlackChannelInfo> | null> {
+        let cursor: string | undefined;
+
+        do {
+            const res = await this.slack(env, 'conversations.list', SlackChannelList, {
+                types: 'public_channel,private_channel',
+                exclude_archived: false,
+                limit: 1000,
+                ...(cursor ? { cursor } : {})
+            });
+
+            if (!res.ok) throw new Error(`Slack conversations.list: ${res.error}`);
+
+            const match = (res.channels || []).find((c) => c.name === name);
+            if (match) return match;
+
+            cursor = res.response_metadata?.next_cursor || undefined;
+        } while (cursor);
+
+        return null;
+    }
+
     async createChannel(
         env: Static<typeof OutgoingInput>,
         event: Static<typeof Placement>['event']
     ): Promise<{ id: string, name: string }> {
+        const name = this.channelName(env.SLACK_PREFIX, event);
+
         let res = await this.slack(env, 'conversations.create', SlackChannel, {
-            name: this.channelName(env.SLACK_PREFIX, event),
+            name,
             is_private: env.SLACK_PRIVATE
         });
 
         if (res.error === 'name_taken') {
+            const existing = await this.findChannel(env, name);
+
+            if (existing) {
+                await this.ensureActive(env, existing.id);
+                return existing;
+            }
+
             res = await this.slack(env, 'conversations.create', SlackChannel, {
                 name: this.channelName(env.SLACK_PREFIX, event, `-${event.id.slice(0, 6)}`),
                 is_private: env.SLACK_PRIVATE
