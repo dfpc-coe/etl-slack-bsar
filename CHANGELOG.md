@@ -12,6 +12,11 @@
 
 ### Pending Release
 
+### v1.3.0
+
+- :tada: Archive the Slack channel when its CoreEvent is removed from the Board (`board:event:delete`)
+- :rocket: Post a `Reopened` announcement with the current remarks when a channel is unarchived
+
 ### v1.2.0
 
 - :tada: Unarchive the Slack channel of a re-created or updated CoreEvent instead of skipping it, reusing a channel of the same name when the ephemeral store was reset

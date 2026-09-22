@@ -134,11 +134,8 @@ export default class Task extends ETL {
         let created = 0;
 
         for (const message of Task.outgoingMessages(event)) {
-            if (
-                message.type !== OutgoingMessageType.BoardEvent
-                || (message.action !== OutgoingAction.Create && message.action !== OutgoingAction.Update)
-            ) {
-                debug(`skip - message ${message.type}:${'action' in message ? message.action : '-'} is not a ${OutgoingMessageType.BoardEvent} create or update`);
+            if (message.type !== OutgoingMessageType.BoardEvent) {
+                debug(`skip - message ${message.type} is not a ${OutgoingMessageType.BoardEvent}`);
                 continue;
             }
 
@@ -157,12 +154,30 @@ export default class Task extends ETL {
             }
 
             const known = channels[placement.event.id];
+
+            if (message.action === OutgoingAction.Delete) {
+                if (!known) {
+                    debug(`skip - event ${placement.event.id} removed but has no channel`);
+                    continue;
+                }
+
+                const state = await this.archive(env, known);
+                debug(`event ${placement.event.id} removed from board, channel ${known}: ${state}`);
+
+                if (state === 'missing') {
+                    delete channels[placement.event.id];
+                    changed = true;
+                }
+
+                continue;
+            }
+
             if (known) {
                 const state = await this.ensureActive(env, known);
                 debug(`event ${placement.event.id} already has channel ${known}: ${state}`);
 
                 if (state === 'unarchived') {
-                    await this.announce(env, known, placement.event);
+                    await this.announce(env, known, placement.event, { reopened: true });
                 }
 
                 if (state !== 'missing') continue;
@@ -183,7 +198,7 @@ export default class Task extends ETL {
             changed = true;
             created++;
 
-            await this.announce(env, channel.id, placement.event);
+            await this.announce(env, channel.id, placement.event, { reopened: channel.reopened });
 
             try {
                 await this.link(env, placement.event.id, channel);
@@ -232,6 +247,20 @@ export default class Task extends ETL {
         return 'unarchived';
     }
 
+    /** Archive the channel of an incident removed from the Board - the mapping is kept so a re-placed Event revives it */
+    async archive(
+        env: Static<typeof OutgoingInput>,
+        channel: string
+    ): Promise<'archived' | 'already_archived' | 'missing'> {
+        const res = await this.slack(env, 'conversations.archive', SlackResponse, { channel });
+
+        if (res.ok) return 'archived';
+        if (res.error === 'already_archived') return 'already_archived';
+        if (res.error === 'channel_not_found') return 'missing';
+
+        throw new Error(`Slack conversations.archive: ${res.error}`);
+    }
+
     /** Look up a channel by name so a re-created incident reuses its channel when the ephemeral store was reset */
     async findChannel(
         env: Static<typeof OutgoingInput>,
@@ -261,7 +290,7 @@ export default class Task extends ETL {
     async createChannel(
         env: Static<typeof OutgoingInput>,
         event: Static<typeof Placement>['event']
-    ): Promise<{ id: string, name: string }> {
+    ): Promise<{ id: string, name: string, reopened: boolean }> {
         const name = this.channelName(env.SLACK_PREFIX, event);
 
         let res = await this.slack(env, 'conversations.create', SlackChannel, {
@@ -273,8 +302,8 @@ export default class Task extends ETL {
             const existing = await this.findChannel(env, name);
 
             if (existing) {
-                await this.ensureActive(env, existing.id);
-                return existing;
+                const state = await this.ensureActive(env, existing.id);
+                return { ...existing, reopened: state === 'unarchived' };
             }
 
             res = await this.slack(env, 'conversations.create', SlackChannel, {
@@ -294,22 +323,24 @@ export default class Task extends ETL {
             if (!invite.ok) console.error(`not ok - Slack conversations.invite: ${invite.error}`);
         }
 
-        return res.channel;
+        return { ...res.channel, reopened: false };
     }
 
+    /** Post the current state of the Event - a reopened channel always states the remarks, even when empty */
     async announce(
         env: Static<typeof OutgoingInput>,
         channel: string,
-        event: Static<typeof Placement>['event']
+        event: Static<typeof Placement>['event'],
+        opts: { reopened?: boolean } = {}
     ): Promise<void> {
         const [lng, lat] = event.geometry.coordinates;
 
         const lines = [
-            `*${event.name}*`,
+            opts.reopened ? `*Reopened: ${event.name}*` : `*${event.name}*`,
             event.priority ? `Priority: ${event.priority}` : null,
             event.location ? `Location: ${event.location}` : null,
             `Coordinates: ${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-            event.remarks || null
+            opts.reopened ? `Remarks: ${event.remarks || 'none'}` : (event.remarks || null)
         ].filter(Boolean);
 
         const topic = await this.slack(env, 'conversations.setTopic', SlackResponse, {

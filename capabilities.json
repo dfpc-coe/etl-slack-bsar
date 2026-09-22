@@ -28,6 +28,10 @@
                 {
                     "resource": "board:event:update",
                     "description": "Unarchives the Slack channel of a SAR CoreEvent when it is moved on the configured Board"
+                },
+                {
+                    "resource": "board:event:delete",
+                    "description": "Archives the Slack channel of a SAR CoreEvent when it is removed from the configured Board"
                 }
             ]
         }
