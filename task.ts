@@ -381,19 +381,23 @@ export default class Task extends ETL {
         });
     }
 
+    /** Form encoded, as Slack read methods (conversations.info/list) reject JSON bodies with invalid_arguments */
     async slack<T extends TSchema>(
         env: Static<typeof OutgoingInput>,
         method: string,
         schema: T,
-        body: Record<string, unknown>
+        body: Record<string, string | number | boolean>
     ): Promise<Static<T>> {
+        const form = new URLSearchParams();
+        for (const [key, value] of Object.entries(body)) form.set(key, String(value));
+
         const res = await fetch(`${SLACK_API}/${method}`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${env.SLACK_TOKEN}`,
-                'Content-Type': 'application/json; charset=utf-8'
+                'Content-Type': 'application/x-www-form-urlencoded'
             },
-            body: JSON.stringify(body)
+            body: form.toString()
         });
 
         return await res.typed(schema);

@@ -12,6 +12,10 @@
 
 ### Pending Release
 
+### v1.3.1
+
+- :bug: Send Slack requests form encoded - read methods such as `conversations.info` reject JSON bodies
+
 ### v1.3.0
 
 - :tada: Archive the Slack channel when its CoreEvent is removed from the Board (`board:event:delete`)
