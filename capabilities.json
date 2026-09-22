@@ -27,7 +27,7 @@
                 },
                 {
                     "resource": "board:event:update",
-                    "description": "Unarchives the Slack channel of a SAR CoreEvent when it is moved on the configured Board"
+                    "description": "Unarchives the Slack channel of a SAR CoreEvent when it is moved on the configured Board and ensures the channel is linked from the CoreEvent"
                 },
                 {
                     "resource": "board:event:delete",

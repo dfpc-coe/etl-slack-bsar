@@ -6,7 +6,7 @@
     "description": "",
     "main": "task.ts",
     "scripts": {
-        "lint": "eslint *.ts",
+        "lint": "eslint task.ts lib/",
         "build": "tsc --build",
         "test": "exit 0"
     },

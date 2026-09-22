@@ -1,14 +1,15 @@
-import type { Static, TSchema } from '@sinclair/typebox';
+import type { TSchema } from '@sinclair/typebox';
 import { Type } from '@sinclair/typebox';
 import type Lambda from 'aws-lambda';
 import type { Event } from '@tak-ps/etl';
-import ETL, { SchemaType, handler as internal, local, fetch, DataFlowType, OutgoingMessageType, OutgoingAction } from '@tak-ps/etl';
-
-const SLACK_API = 'https://slack.com/api';
+import ETL, { SchemaType, handler as internal, local, DataFlowType, OutgoingMessageType, OutgoingAction } from '@tak-ps/etl';
+import Slack from './lib/slack.js';
+import Incidents from './lib/incident.js';
+import CoreEvents, { Placement } from './lib/cloudtak.js';
 
 const OutgoingInput = Type.Object({
     'SLACK_TOKEN': Type.String({
-        description: 'Slack Bot User OAuth Token (xoxb-...) - requires channels:manage, channels:read, groups:write, groups:read & chat:write scopes'
+        description: 'Slack Bot User OAuth Token (xoxb-...) - requires channels:manage, channels:read, groups:write, groups:read & chat:write scopes - conversations.connect:write adds a shareable invite link to the CoreEvent'
     }),
     'SLACK_PRIVATE': Type.Boolean({
         default: false,
@@ -44,64 +45,6 @@ const EphemeralStore = Type.Object({
     channels: Type.Optional(Type.Record(Type.String(), Type.String()))
 });
 
-// Subset of CloudTAK's CoreEventBoardEventResponse this task relies on
-const Placement = Type.Object({
-    id: Type.String(),
-    board: Type.String(),
-    event: Type.Object({
-        id: Type.String(),
-        name: Type.String(),
-        type: Type.String(),
-        created: Type.String(),
-        priority: Type.Optional(Type.String()),
-        location: Type.Optional(Type.String()),
-        remarks: Type.Optional(Type.String()),
-        geometry: Type.Object({
-            type: Type.Literal('Point'),
-            coordinates: Type.Array(Type.Number())
-        })
-    })
-});
-
-const SlackChannelInfo = Type.Object({
-    id: Type.String(),
-    name: Type.String(),
-    is_archived: Type.Optional(Type.Boolean())
-});
-
-const SlackChannel = Type.Object({
-    ok: Type.Boolean(),
-    error: Type.Optional(Type.String()),
-    channel: Type.Optional(SlackChannelInfo)
-});
-
-const SlackChannelList = Type.Object({
-    ok: Type.Boolean(),
-    error: Type.Optional(Type.String()),
-    channels: Type.Optional(Type.Array(SlackChannelInfo)),
-    response_metadata: Type.Optional(Type.Object({
-        next_cursor: Type.Optional(Type.String())
-    }))
-});
-
-const SlackAuth = Type.Object({
-    ok: Type.Boolean(),
-    error: Type.Optional(Type.String()),
-    url: Type.Optional(Type.String({ description: 'Workspace URL - ie: https://example.slack.com/' }))
-});
-
-const CoreEventLinks = Type.Object({
-    links: Type.Array(Type.Object({
-        name: Type.String(),
-        url: Type.String()
-    }))
-});
-
-const SlackResponse = Type.Object({
-    ok: Type.Boolean(),
-    error: Type.Optional(Type.String())
-});
-
 export default class Task extends ETL {
     static name = 'etl-slack-bsar'
     static flow = [ DataFlowType.Outgoing ];
@@ -123,6 +66,14 @@ export default class Task extends ETL {
         const channels = ephem.channels || {};
 
         const types = new Set(env.SAR_TYPES.map((t) => t.type));
+
+        const slack = new Slack(env.SLACK_TOKEN);
+        const incidents = new Incidents(slack, {
+            prefix: env.SLACK_PREFIX,
+            isPrivate: env.SLACK_PRIVATE,
+            invite: env.SLACK_INVITE.map((u) => u.user)
+        });
+        const coreEvents = new CoreEvents(this);
 
         const debug = (msg: string) => {
             if (env.DEBUG) console.log(`ok - debug - ${msg}`);
@@ -155,13 +106,14 @@ export default class Task extends ETL {
 
             const known = channels[placement.event.id];
 
+            // Removed from the Board => archive, keeping the mapping so a re-placed Event revives the channel
             if (message.action === OutgoingAction.Delete) {
                 if (!known) {
                     debug(`skip - event ${placement.event.id} removed but has no channel`);
                     continue;
                 }
 
-                const state = await this.archive(env, known);
+                const state = await slack.archive(known);
                 debug(`event ${placement.event.id} removed from board, channel ${known}: ${state}`);
 
                 if (state === 'missing') {
@@ -172,15 +124,20 @@ export default class Task extends ETL {
                 continue;
             }
 
+            // Already has a channel => revive it if archived & keep the CoreEvent linked to it
             if (known) {
-                const state = await this.ensureActive(env, known);
-                debug(`event ${placement.event.id} already has channel ${known}: ${state}`);
+                const active = await slack.ensureActive(known);
+                debug(`event ${placement.event.id} already has channel ${known}: ${active.state}`);
 
-                if (state === 'unarchived') {
-                    await this.announce(env, known, placement.event, { reopened: true });
+                if (active.state !== 'missing') {
+                    if (active.state === 'unarchived') {
+                        await incidents.announce(known, placement.event, { reopened: true });
+                    }
+
+                    await this.link(coreEvents, slack, placement.event.id, active.channel);
+
+                    continue;
                 }
-
-                if (state !== 'missing') continue;
 
                 delete channels[placement.event.id];
                 changed = true;
@@ -191,20 +148,16 @@ export default class Task extends ETL {
                 continue;
             }
 
+            // Newly placed => open a channel, announce the incident & link the CoreEvent to it
             debug(`creating channel for ${placement.event.id}: ${placement.event.name}`);
 
-            const channel = await this.createChannel(env, placement.event);
+            const channel = await incidents.open(placement.event);
             channels[placement.event.id] = channel.id;
             changed = true;
             created++;
 
-            await this.announce(env, channel.id, placement.event, { reopened: channel.reopened });
-
-            try {
-                await this.link(env, placement.event.id, channel);
-            } catch (err) {
-                console.error(`not ok - failed to link Slack channel to CoreEvent ${placement.event.id}:`, err);
-            }
+            await incidents.announce(channel.id, placement.event, { reopened: channel.reopened });
+            await this.link(coreEvents, slack, placement.event.id, channel);
         }
 
         if (changed) await this.setEphemeral({ channels }, DataFlowType.Outgoing);
@@ -214,193 +167,32 @@ export default class Task extends ETL {
         return true;
     }
 
-    /** Slack channel names are lowercase alphanumerics, hyphens & underscores up to 80 chars */
-    channelName(prefix: string, event: Static<typeof Placement>['event'], suffix = ''): string {
-        const slug = event.name
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-+|-+$/g, '');
-
-        return [prefix, event.created.slice(0, 10), slug]
-            .filter(Boolean)
-            .join('-')
-            .slice(0, 80 - suffix.length) + suffix;
-    }
-
-    /**
-     * Ensure a known channel is usable - unarchiving it if a previous incident
-     * closed it out. Returns `missing` if Slack no longer knows the channel
-     */
-    async ensureActive(
-        env: Static<typeof OutgoingInput>,
-        channel: string
-    ): Promise<'active' | 'unarchived' | 'missing'> {
-        const info = await this.slack(env, 'conversations.info', SlackChannel, { channel });
-
-        if (info.error === 'channel_not_found') return 'missing';
-        if (!info.ok || !info.channel) throw new Error(`Slack conversations.info: ${info.error}`);
-        if (!info.channel.is_archived) return 'active';
-
-        const res = await this.slack(env, 'conversations.unarchive', SlackResponse, { channel });
-        if (!res.ok && res.error !== 'not_archived') throw new Error(`Slack conversations.unarchive: ${res.error}`);
-
-        return 'unarchived';
-    }
-
-    /** Archive the channel of an incident removed from the Board - the mapping is kept so a re-placed Event revives it */
-    async archive(
-        env: Static<typeof OutgoingInput>,
-        channel: string
-    ): Promise<'archived' | 'already_archived' | 'missing'> {
-        const res = await this.slack(env, 'conversations.archive', SlackResponse, { channel });
-
-        if (res.ok) return 'archived';
-        if (res.error === 'already_archived') return 'already_archived';
-        if (res.error === 'channel_not_found') return 'missing';
-
-        throw new Error(`Slack conversations.archive: ${res.error}`);
-    }
-
-    /** Look up a channel by name so a re-created incident reuses its channel when the ephemeral store was reset */
-    async findChannel(
-        env: Static<typeof OutgoingInput>,
-        name: string
-    ): Promise<Static<typeof SlackChannelInfo> | null> {
-        let cursor: string | undefined;
-
-        do {
-            const res = await this.slack(env, 'conversations.list', SlackChannelList, {
-                types: 'public_channel,private_channel',
-                exclude_archived: false,
-                limit: 1000,
-                ...(cursor ? { cursor } : {})
-            });
-
-            if (!res.ok) throw new Error(`Slack conversations.list: ${res.error}`);
-
-            const match = (res.channels || []).find((c) => c.name === name);
-            if (match) return match;
-
-            cursor = res.response_metadata?.next_cursor || undefined;
-        } while (cursor);
-
-        return null;
-    }
-
-    async createChannel(
-        env: Static<typeof OutgoingInput>,
-        event: Static<typeof Placement>['event']
-    ): Promise<{ id: string, name: string, reopened: boolean }> {
-        const name = this.channelName(env.SLACK_PREFIX, event);
-
-        let res = await this.slack(env, 'conversations.create', SlackChannel, {
-            name,
-            is_private: env.SLACK_PRIVATE
-        });
-
-        if (res.error === 'name_taken') {
-            const existing = await this.findChannel(env, name);
-
-            if (existing) {
-                const state = await this.ensureActive(env, existing.id);
-                return { ...existing, reopened: state === 'unarchived' };
-            }
-
-            res = await this.slack(env, 'conversations.create', SlackChannel, {
-                name: this.channelName(env.SLACK_PREFIX, event, `-${event.id.slice(0, 6)}`),
-                is_private: env.SLACK_PRIVATE
-            });
-        }
-
-        if (!res.ok || !res.channel) throw new Error(`Slack conversations.create: ${res.error}`);
-
-        if (env.SLACK_INVITE.length) {
-            const invite = await this.slack(env, 'conversations.invite', SlackResponse, {
-                channel: res.channel.id,
-                users: env.SLACK_INVITE.map((u) => u.user).join(',')
-            });
-
-            if (!invite.ok) console.error(`not ok - Slack conversations.invite: ${invite.error}`);
-        }
-
-        return { ...res.channel, reopened: false };
-    }
-
-    /** Post the current state of the Event - a reopened channel always states the remarks, even when empty */
-    async announce(
-        env: Static<typeof OutgoingInput>,
-        channel: string,
-        event: Static<typeof Placement>['event'],
-        opts: { reopened?: boolean } = {}
-    ): Promise<void> {
-        const [lng, lat] = event.geometry.coordinates;
-
-        const lines = [
-            opts.reopened ? `*Reopened: ${event.name}*` : `*${event.name}*`,
-            event.priority ? `Priority: ${event.priority}` : null,
-            event.location ? `Location: ${event.location}` : null,
-            `Coordinates: ${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-            opts.reopened ? `Remarks: ${event.remarks || 'none'}` : (event.remarks || null)
-        ].filter(Boolean);
-
-        const topic = await this.slack(env, 'conversations.setTopic', SlackResponse, {
-            channel,
-            topic: event.name.slice(0, 250)
-        });
-        if (!topic.ok) console.error(`not ok - Slack conversations.setTopic: ${topic.error}`);
-
-        const post = await this.slack(env, 'chat.postMessage', SlackResponse, {
-            channel,
-            text: lines.join('\n')
-        });
-        if (!post.ok) console.error(`not ok - Slack chat.postMessage: ${post.error}`);
-    }
-
-    /** PATCH replaces the links array, so append to the current links of the CoreEvent */
+    /** Linking is best effort - a CoreEvent the Layer cannot read or update must not block channel handling */
     async link(
-        env: Static<typeof OutgoingInput>,
+        coreEvents: CoreEvents,
+        slack: Slack,
         event: string,
         channel: { id: string, name: string }
     ): Promise<void> {
-        const auth = await this.slack(env, 'auth.test', SlackAuth, {});
-        if (!auth.ok || !auth.url) throw new Error(`Slack auth.test: ${auth.error}`);
+        try {
+            const links = [{
+                name: `Slack: #${channel.name}`,
+                url: await slack.channelUrl(channel.id)
+            }];
 
-        const url = new URL(`/archives/${channel.id}`, auth.url).toString();
+            try {
+                links.push({
+                    name: `Slack Invite: #${channel.name}`,
+                    url: await slack.inviteLink(channel.id)
+                });
+            } catch (err) {
+                console.error(`not ok - no invite link for Slack channel ${channel.id}:`, err);
+            }
 
-        const current = this.type(CoreEventLinks, await this.fetch(`/api/core/event/${event}`));
-        if (current.links.some((l) => l.url === url)) return;
-
-        await this.fetch(`/api/core/event/${event}`, {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                links: [...current.links, { name: `Slack: #${channel.name}`, url }]
-            })
-        });
-    }
-
-    /** Form encoded, as Slack read methods (conversations.info/list) reject JSON bodies with invalid_arguments */
-    async slack<T extends TSchema>(
-        env: Static<typeof OutgoingInput>,
-        method: string,
-        schema: T,
-        body: Record<string, string | number | boolean>
-    ): Promise<Static<T>> {
-        const form = new URLSearchParams();
-        for (const [key, value] of Object.entries(body)) form.set(key, String(value));
-
-        const res = await fetch(`${SLACK_API}/${method}`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${env.SLACK_TOKEN}`,
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: form.toString()
-        });
-
-        return await res.typed(schema);
+            await coreEvents.link(event, links);
+        } catch (err) {
+            console.error(`not ok - failed to link Slack channel to CoreEvent ${event}:`, err);
+        }
     }
 }
 

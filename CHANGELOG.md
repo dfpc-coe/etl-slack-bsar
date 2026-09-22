@@ -12,6 +12,12 @@
 
 ### Pending Release
 
+### v1.4.0
+
+- :tada: Add a shareable Slack invite link to the CoreEvent alongside the channel link when the bot has the `conversations.connect:write` scope
+- :rocket: Split the Slack client, incident channel handling & CoreEvent linking into `lib/` so `task.ts` reads as the decision flow
+- :rocket: Ensure the Slack channel link is present on the CoreEvent on every Board create or update, not only when the channel is first created
+
 ### v1.3.1
 
 - :bug: Send Slack requests form encoded - read methods such as `conversations.info` reject JSON bodies
