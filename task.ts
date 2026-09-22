@@ -9,7 +9,7 @@ import CoreEvents, { Placement } from './lib/cloudtak.js';
 
 const OutgoingInput = Type.Object({
     'SLACK_TOKEN': Type.String({
-        description: 'Slack Bot User OAuth Token (xoxb-...) - requires channels:manage, channels:read, groups:write, groups:read & chat:write scopes - conversations.connect:write adds a shareable invite link to the CoreEvent'
+        description: 'Slack User OAuth Token (xoxp-...) with channels:write, channels:read, groups:write, groups:read & chat:write scopes - channels are created & messages posted as that User'
     }),
     'SLACK_PRIVATE': Type.Boolean({
         default: false,
@@ -175,21 +175,10 @@ export default class Task extends ETL {
         channel: { id: string, name: string }
     ): Promise<void> {
         try {
-            const links = [{
+            await coreEvents.link(event, [{
                 name: `Slack: #${channel.name}`,
                 url: await slack.channelUrl(channel.id)
-            }];
-
-            try {
-                links.push({
-                    name: `Slack Invite: #${channel.name}`,
-                    url: await slack.inviteLink(channel.id)
-                });
-            } catch (err) {
-                console.error(`not ok - no invite link for Slack channel ${channel.id}:`, err);
-            }
-
-            await coreEvents.link(event, links);
+            }]);
         } catch (err) {
             console.error(`not ok - failed to link Slack channel to CoreEvent ${event}:`, err);
         }

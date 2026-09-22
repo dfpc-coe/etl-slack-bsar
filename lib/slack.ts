@@ -30,16 +30,11 @@ const SlackChannelList = Type.Object({
     }))
 });
 
-const SlackInvite = Type.Object({
-    ok: Type.Boolean(),
-    error: Type.Optional(Type.String()),
-    url: Type.Optional(Type.String({ description: 'Shareable invite link - ie: https://join.slack.com/share/...' }))
-});
-
 const SlackAuth = Type.Object({
     ok: Type.Boolean(),
     error: Type.Optional(Type.String()),
-    url: Type.Optional(Type.String({ description: 'Workspace URL - ie: https://example.slack.com/' }))
+    url: Type.Optional(Type.String({ description: 'Workspace URL - ie: https://example.slack.com/' })),
+    user_id: Type.Optional(Type.String({ description: 'Slack User ID the token acts as' }))
 });
 
 export type ChannelState =
@@ -47,13 +42,27 @@ export type ChannelState =
     | { state: 'missing' };
 
 /**
- * Thin client over the Slack Web API conversation & chat methods this task uses
+ * Thin client over the Slack Web API conversation & chat methods this task uses,
+ * acting as the User (or Bot) the token belongs to
  */
 export default class Slack {
     token: string;
+    identity?: Promise<{ url: string, user: string }>;
 
     constructor(token: string) {
         this.token = token;
+    }
+
+    /** Workspace URL & User ID of the token, looked up once per invocation */
+    async self(): Promise<{ url: string, user: string }> {
+        if (!this.identity) {
+            this.identity = this.call('auth.test', SlackAuth).then((auth) => {
+                if (!auth.ok || !auth.url || !auth.user_id) throw new Error(`Slack auth.test: ${auth.error}`);
+                return { url: auth.url, user: auth.user_id };
+            });
+        }
+
+        return await this.identity;
     }
 
     /** Form encoded, as Slack read methods (conversations.info/list) reject JSON bodies with invalid_arguments */
@@ -134,10 +143,13 @@ export default class Slack {
         throw new Error(`Slack conversations.archive: ${res.error}`);
     }
 
+    /** Invite users to a channel - the token's own User is already a member of channels it creates */
     async invite(channel: string, users: string[]): Promise<void> {
-        if (!users.length) return;
+        const self = await this.self();
+        const others = users.filter((user) => user !== self.user);
+        if (!others.length) return;
 
-        const res = await this.call('conversations.invite', SlackResponse, { channel, users: users.join(',') });
+        const res = await this.call('conversations.invite', SlackResponse, { channel, users: others.join(',') });
         if (!res.ok) console.error(`not ok - Slack conversations.invite: ${res.error}`);
     }
 
@@ -151,22 +163,8 @@ export default class Slack {
         if (!res.ok) console.error(`not ok - Slack chat.postMessage: ${res.error}`);
     }
 
-    /**
-     * Shareable invite link to a channel - requires the conversations.connect:write
-     * scope & Slack Connect on the workspace plan, so callers treat failure as optional
-     */
-    async inviteLink(channel: string): Promise<string> {
-        const res = await this.call('conversations.inviteShared', SlackInvite, { channel });
-        if (!res.ok || !res.url) throw new Error(`Slack conversations.inviteShared: ${res.error}`);
-
-        return res.url;
-    }
-
     /** Permalink of a channel in the workspace the token belongs to */
     async channelUrl(channel: string): Promise<string> {
-        const auth = await this.call('auth.test', SlackAuth);
-        if (!auth.ok || !auth.url) throw new Error(`Slack auth.test: ${auth.error}`);
-
-        return new URL(`/archives/${channel}`, auth.url).toString();
+        return new URL(`/archives/${channel}`, (await this.self()).url).toString();
     }
 }

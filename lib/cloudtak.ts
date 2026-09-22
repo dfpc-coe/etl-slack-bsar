@@ -40,10 +40,7 @@ export default class CoreEvents {
         this.task = task;
     }
 
-    /**
-     * PATCH replaces the links array, so append only the links not already
-     * present - matched by name as well as URL, since invite links are minted fresh on every call
-     */
+    /** PATCH replaces the links array, so append only the links not already present by URL or name */
     async link(event: string, links: Array<{ name: string, url: string }>): Promise<void> {
         const current = this.task.type(CoreEventLinks, await this.task.fetch(`/api/core/event/${event}`));
 

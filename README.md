@@ -18,7 +18,7 @@ Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so a
 
 | Environment | Description |
 | ----------- | ----------- |
-| `SLACK_TOKEN` | Slack Bot User OAuth Token (`xoxb-`) with `channels:manage`, `groups:write` & `chat:write` scopes |
+| `SLACK_TOKEN` | Slack User OAuth Token (`xoxp-`) with `channels:write`, `channels:read`, `groups:write`, `groups:read` & `chat:write` scopes - channels are created & messages posted as that User, so a shared service account is recommended |
 | `SLACK_PRIVATE` | Create private channels instead of public ones |
 | `SLACK_PREFIX` | Prefix of created channel names |
 | `SLACK_INVITE` | Slack User IDs invited to every created channel |

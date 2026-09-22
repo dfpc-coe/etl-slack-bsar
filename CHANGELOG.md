@@ -12,6 +12,11 @@
 
 ### Pending Release
 
+### v1.4.1
+
+- :rocket: Remove the Slack invite link added in v1.4.0 - `conversations.inviteShared` is Bot token only and Bots must name recipients, so no token type can mint a shareable link
+- :rocket: Act as a Slack User OAuth Token (`xoxp-`) rather than a Bot token - channels are created & messages posted as that User, who is skipped when inviting `SLACK_INVITE` users as they already belong to channels they create
+
 ### v1.4.0
 
 - :tada: Add a shareable Slack invite link to the CoreEvent alongside the channel link when the bot has the `conversations.connect:write` scope
