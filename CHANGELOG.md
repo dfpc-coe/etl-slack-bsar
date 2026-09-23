@@ -12,6 +12,10 @@
 
 ### Pending Release
 
+### v1.6.0
+
+- :rocket: Set Channel Purpose to the CoreEvent ID so a channel of the same name is only reused for that same Event, otherwise the ID-suffixed name is used
+
 ### v1.5.0
 
 - :tada: Add optional `SLACK_USERGROUP` - members of the Slack User Group (by `@handle` or name) are invited to every created channel alongside `SLACK_INVITE`, requiring the `usergroups:read` scope
