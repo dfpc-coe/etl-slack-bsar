@@ -86,12 +86,15 @@ export default class Incidents {
         throw new Error(`Slack conversations.create: name_taken`);
     }
 
-    /** Post the current state of the Event - a reopened channel always states the remarks, even when empty */
+    /**
+     * Post the current state of the Event, notifying everyone in the channel
+     * with @here - a reopened channel always states the remarks, even when empty
+     */
     async announce(channel: string, event: IncidentEvent, opts: { reopened?: boolean } = {}): Promise<void> {
         const [lng, lat] = event.geometry.coordinates;
 
         const lines = [
-            opts.reopened ? `*Reopened: ${event.name}*` : `*${event.name}*`,
+            opts.reopened ? `<!here> *Reopened: ${event.name}*` : `<!here> *${event.name}*`,
             event.priority ? `Priority: ${event.priority}` : null,
             event.location ? `Location: ${event.location}` : null,
             `Coordinates: ${lat.toFixed(5)}, ${lng.toFixed(5)}`,

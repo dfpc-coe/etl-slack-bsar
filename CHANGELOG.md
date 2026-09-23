@@ -12,6 +12,10 @@
 
 ### Pending Release
 
+### v1.6.1
+
+- :rocket: The announcement posted when a channel is opened or reopened now mentions `@here`
+
 ### v1.6.0
 
 - :rocket: Set Channel Purpose to the CoreEvent ID so a channel of the same name is only reused for that same Event, otherwise the ID-suffixed name is used
