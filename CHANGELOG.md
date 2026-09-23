@@ -16,6 +16,7 @@
 
 - :tada: Add optional `SLACK_USERGROUP` - members of the Slack User Group (by `@handle` or name) are invited to every created channel alongside `SLACK_INVITE`, requiring the `usergroups:read` scope
 - :rocket: Invite with `force` so one deactivated or already-present User no longer blocks the rest of the invite
+- :bug: Two Events with the same name on the same day no longer share a channel - the channel purpose records the CoreEvent ID and a name-matched channel is only reused when it was opened for that same Event, otherwise the ID-suffixed name is used
 
 ### v1.4.1
 

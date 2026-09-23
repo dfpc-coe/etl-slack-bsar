@@ -7,7 +7,10 @@ const SLACK_API = 'https://slack.com/api';
 export const SlackChannelInfo = Type.Object({
     id: Type.String(),
     name: Type.String(),
-    is_archived: Type.Optional(Type.Boolean())
+    is_archived: Type.Optional(Type.Boolean()),
+    purpose: Type.Optional(Type.Object({
+        value: Type.String()
+    }))
 });
 
 const SlackResponse = Type.Object({
@@ -179,6 +182,11 @@ export default class Slack {
         if (!group) throw new Error(`Slack User Group "${name}" not found`);
 
         return group.users || [];
+    }
+
+    async setPurpose(channel: string, purpose: string): Promise<void> {
+        const res = await this.call('conversations.setPurpose', SlackResponse, { channel, purpose: purpose.slice(0, 250) });
+        if (!res.ok) console.error(`not ok - Slack conversations.setPurpose: ${res.error}`);
     }
 
     async setTopic(channel: string, topic: string): Promise<void> {

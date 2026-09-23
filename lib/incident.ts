@@ -51,30 +51,39 @@ export default class Incidents {
             .slice(0, 80 - suffix.length) + suffix;
     }
 
+    /** The channel purpose records which CoreEvent a channel was opened for */
+    purpose(event: IncidentEvent): string {
+        return `CoreEvent: ${event.id}`;
+    }
+
     /**
-     * Open the channel of an incident - reusing (and unarchiving) a channel of
-     * the same name when the ephemeral store was reset, otherwise creating one
+     * Open the channel of an incident - reusing (and unarchiving) the channel
+     * opened for this same Event when the ephemeral store was reset, otherwise
+     * creating one. A channel of the same name opened for a different Event
+     * (ie: two incidents named alike on the same day) is never reused
      */
     async open(event: IncidentEvent): Promise<IncidentChannel> {
-        const name = this.channelName(event);
+        const purpose = this.purpose(event);
 
-        let channel = await this.slack.create(name, this.isPrivate);
+        for (const name of [this.channelName(event), this.channelName(event, `-${event.id.slice(0, 6)}`)]) {
+            const channel = await this.slack.create(name, this.isPrivate);
 
-        if (!channel) {
+            if (channel) {
+                await this.slack.setPurpose(channel.id, purpose);
+                await this.slack.invite(channel.id, await this.invitees());
+
+                return { ...channel, reopened: false };
+            }
+
             const existing = await this.slack.find(name);
 
-            if (existing) {
+            if (existing && existing.purpose?.value === purpose) {
                 const active = await this.slack.ensureActive(existing.id);
                 return { ...existing, reopened: active.state === 'unarchived' };
             }
-
-            channel = await this.slack.create(this.channelName(event, `-${event.id.slice(0, 6)}`), this.isPrivate);
-            if (!channel) throw new Error(`Slack conversations.create: name_taken`);
         }
 
-        await this.slack.invite(channel.id, await this.invitees());
-
-        return { ...channel, reopened: false };
+        throw new Error(`Slack conversations.create: name_taken`);
     }
 
     /** Post the current state of the Event - a reopened channel always states the remarks, even when empty */
