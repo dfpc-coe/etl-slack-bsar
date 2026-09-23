@@ -30,6 +30,17 @@ const SlackChannelList = Type.Object({
     }))
 });
 
+const SlackUserGroupList = Type.Object({
+    ok: Type.Boolean(),
+    error: Type.Optional(Type.String()),
+    usergroups: Type.Optional(Type.Array(Type.Object({
+        id: Type.String(),
+        handle: Type.String({ description: 'Mention handle without the @ - ie: sar-team' }),
+        name: Type.String({ description: 'Display name - ie: SAR Team' }),
+        users: Type.Optional(Type.Array(Type.String()))
+    })))
+});
+
 const SlackAuth = Type.Object({
     ok: Type.Boolean(),
     error: Type.Optional(Type.String()),
@@ -146,11 +157,28 @@ export default class Slack {
     /** Invite users to a channel - the token's own User is already a member of channels it creates */
     async invite(channel: string, users: string[]): Promise<void> {
         const self = await this.self();
-        const others = users.filter((user) => user !== self.user);
+        const others = [...new Set(users)].filter((user) => user !== self.user);
         if (!others.length) return;
 
-        const res = await this.call('conversations.invite', SlackResponse, { channel, users: others.join(',') });
+        // force => keep inviting the valid IDs when one is deactivated or already a member
+        const res = await this.call('conversations.invite', SlackResponse, { channel, users: others.join(','), force: true });
         if (!res.ok) console.error(`not ok - Slack conversations.invite: ${res.error}`);
+    }
+
+    /** Member User IDs of a User Group, matched by @handle or display name - requires the usergroups:read scope */
+    async usergroupMembers(name: string): Promise<string[]> {
+        const wanted = name.trim().replace(/^@/, '').toLowerCase();
+
+        const res = await this.call('usergroups.list', SlackUserGroupList, { include_users: true, include_disabled: false });
+        if (!res.ok) throw new Error(`Slack usergroups.list: ${res.error}`);
+
+        const group = (res.usergroups || []).find((g) => {
+            return g.handle.toLowerCase() === wanted || g.name.trim().toLowerCase() === wanted;
+        });
+
+        if (!group) throw new Error(`Slack User Group "${name}" not found`);
+
+        return group.users || [];
     }
 
     async setTopic(channel: string, topic: string): Promise<void> {

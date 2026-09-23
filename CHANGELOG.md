@@ -12,6 +12,11 @@
 
 ### Pending Release
 
+### v1.5.0
+
+- :tada: Add optional `SLACK_USERGROUP` - members of the Slack User Group (by `@handle` or name) are invited to every created channel alongside `SLACK_INVITE`, requiring the `usergroups:read` scope
+- :rocket: Invite with `force` so one deactivated or already-present User no longer blocks the rest of the invite
+
 ### v1.4.1
 
 - :rocket: Remove the Slack invite link added in v1.4.0 - `conversations.inviteShared` is Bot token only and Bots must name recipients, so no token type can mint a shareable link

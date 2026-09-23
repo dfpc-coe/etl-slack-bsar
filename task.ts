@@ -9,7 +9,7 @@ import CoreEvents, { Placement } from './lib/cloudtak.js';
 
 const OutgoingInput = Type.Object({
     'SLACK_TOKEN': Type.String({
-        description: 'Slack User OAuth Token (xoxp-...) with channels:write, channels:read, groups:write, groups:read & chat:write scopes - channels are created & messages posted as that User'
+        description: 'Slack User OAuth Token (xoxp-...) with channels:write, channels:read, groups:write, groups:read & chat:write scopes (plus usergroups:read if SLACK_USERGROUP is set) - channels are created & messages posted as that User'
     }),
     'SLACK_PRIVATE': Type.Boolean({
         default: false,
@@ -25,6 +25,9 @@ const OutgoingInput = Type.Object({
         default: [],
         description: 'Slack Users invited to every created channel'
     }),
+    'SLACK_USERGROUP': Type.Optional(Type.String({
+        description: 'Slack User Group (@handle or name - ie: @sar-team) whose members are invited to every created channel - requires the usergroups:read scope'
+    })),
     'BOARD': Type.String({
         description: 'ID of the CoreEvent Board to watch for newly placed Events'
     }),
@@ -71,7 +74,8 @@ export default class Task extends ETL {
         const incidents = new Incidents(slack, {
             prefix: env.SLACK_PREFIX,
             isPrivate: env.SLACK_PRIVATE,
-            invite: env.SLACK_INVITE.map((u) => u.user)
+            invite: env.SLACK_INVITE.map((u) => u.user),
+            usergroup: env.SLACK_USERGROUP
         });
         const coreEvents = new CoreEvents(this);
 

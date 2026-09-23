@@ -6,7 +6,7 @@
 
 This is an Outgoing only task subscribed to `board:event:create`. When a CoreEvent is placed on the
 configured Board, and its type is one of the configured SAR types, a Slack channel named
-`<prefix>-<date>-<event name>` is created, the configured users are invited, and the Event details are posted.
+`<prefix>-<date>-<event name>` is created, the configured users and User Group members are invited, and the Event details are posted.
 
 The URL of the created channel is then appended to the `links` of the CoreEvent.
 
@@ -18,10 +18,11 @@ Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so a
 
 | Environment | Description |
 | ----------- | ----------- |
-| `SLACK_TOKEN` | Slack User OAuth Token (`xoxp-`) with `channels:write`, `channels:read`, `groups:write`, `groups:read` & `chat:write` scopes - channels are created & messages posted as that User, so a shared service account is recommended |
+| `SLACK_TOKEN` | Slack User OAuth Token (`xoxp-`) with `channels:write`, `channels:read`, `groups:write`, `groups:read` & `chat:write` scopes (plus `usergroups:read` when `SLACK_USERGROUP` is set) - channels are created & messages posted as that User, so a shared service account is recommended |
 | `SLACK_PRIVATE` | Create private channels instead of public ones |
 | `SLACK_PREFIX` | Prefix of created channel names |
 | `SLACK_INVITE` | Slack User IDs invited to every created channel |
+| `SLACK_USERGROUP` | Optional Slack User Group, by `@handle` or name, whose members are invited to every created channel - User Groups are a paid Slack feature |
 | `BOARD` | ID of the CoreEvent Board to watch |
 | `SAR_TYPES` | MIL-STD-2525E Symbol IDs considered SAR - every Event placed on the Board is accepted if empty |
 

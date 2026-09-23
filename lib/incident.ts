@@ -13,12 +13,29 @@ export default class Incidents {
     prefix: string;
     isPrivate: boolean;
     invite: string[];
+    usergroup?: string;
+    members?: Promise<string[]>;
 
-    constructor(slack: Slack, opts: { prefix: string, isPrivate: boolean, invite: string[] }) {
+    constructor(slack: Slack, opts: { prefix: string, isPrivate: boolean, invite: string[], usergroup?: string }) {
         this.slack = slack;
         this.prefix = opts.prefix;
         this.isPrivate = opts.isPrivate;
         this.invite = opts.invite;
+        this.usergroup = opts.usergroup?.trim() || undefined;
+    }
+
+    /** Users to invite to a new channel - the User Group is resolved once per invocation, and only if a channel is opened */
+    async invitees(): Promise<string[]> {
+        if (!this.usergroup) return this.invite;
+
+        if (!this.members) {
+            this.members = this.slack.usergroupMembers(this.usergroup).catch((err) => {
+                console.error(`not ok - failed to resolve Slack User Group "${this.usergroup}":`, err);
+                return [];
+            });
+        }
+
+        return [...this.invite, ...await this.members];
     }
 
     /** Slack channel names are lowercase alphanumerics, hyphens & underscores up to 80 chars */
@@ -55,7 +72,7 @@ export default class Incidents {
             if (!channel) throw new Error(`Slack conversations.create: name_taken`);
         }
 
-        await this.slack.invite(channel.id, this.invite);
+        await this.slack.invite(channel.id, await this.invitees());
 
         return { ...channel, reopened: false };
     }
