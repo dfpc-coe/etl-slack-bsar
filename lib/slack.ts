@@ -33,6 +33,37 @@ const SlackChannelList = Type.Object({
     }))
 });
 
+export const SlackBookmark = Type.Object({
+    id: Type.String(),
+    title: Type.String(),
+    link: Type.Optional(Type.String())
+});
+
+const SlackBookmarkList = Type.Object({
+    ok: Type.Boolean(),
+    error: Type.Optional(Type.String()),
+    bookmarks: Type.Optional(Type.Array(SlackBookmark))
+});
+
+const SlackPosted = Type.Object({
+    ok: Type.Boolean(),
+    error: Type.Optional(Type.String()),
+    ts: Type.Optional(Type.String({ description: 'Timestamp of the message - the ID it is updated & pinned by' }))
+});
+
+export const SlackMessage = Type.Object({
+    ts: Type.String(),
+    text: Type.Optional(Type.String())
+});
+
+const SlackPinList = Type.Object({
+    ok: Type.Boolean(),
+    error: Type.Optional(Type.String()),
+    items: Type.Optional(Type.Array(Type.Object({
+        message: Type.Optional(SlackMessage)
+    })))
+});
+
 const SlackUserGroupList = Type.Object({
     ok: Type.Boolean(),
     error: Type.Optional(Type.String()),
@@ -133,18 +164,27 @@ export default class Slack {
         return null;
     }
 
+    /** Look up a channel by ID - null if Slack no longer knows it */
+    async info(channel: string): Promise<Static<typeof SlackChannelInfo> | null> {
+        const res = await this.call('conversations.info', SlackChannel, { channel });
+
+        if (res.error === 'channel_not_found') return null;
+        if (!res.ok || !res.channel) throw new Error(`Slack conversations.info: ${res.error}`);
+
+        return res.channel;
+    }
+
     /** Ensure a channel is usable, unarchiving it if needed - `missing` if Slack no longer knows it */
     async ensureActive(channel: string): Promise<ChannelState> {
-        const info = await this.call('conversations.info', SlackChannel, { channel });
+        const info = await this.info(channel);
 
-        if (info.error === 'channel_not_found') return { state: 'missing' };
-        if (!info.ok || !info.channel) throw new Error(`Slack conversations.info: ${info.error}`);
-        if (!info.channel.is_archived) return { state: 'active', channel: info.channel };
+        if (!info) return { state: 'missing' };
+        if (!info.is_archived) return { state: 'active', channel: info };
 
         const res = await this.call('conversations.unarchive', SlackResponse, { channel });
         if (!res.ok && res.error !== 'not_archived') throw new Error(`Slack conversations.unarchive: ${res.error}`);
 
-        return { state: 'unarchived', channel: info.channel };
+        return { state: 'unarchived', channel: info };
     }
 
     async archive(channel: string): Promise<'archived' | 'already_archived' | 'missing'> {
@@ -184,6 +224,25 @@ export default class Slack {
         return group.users || [];
     }
 
+    /** Bookmarks of a channel - requires the bookmarks:read scope */
+    async bookmarks(channel: string): Promise<Array<Static<typeof SlackBookmark>>> {
+        const res = await this.call('bookmarks.list', SlackBookmarkList, { channel_id: channel });
+        if (!res.ok) throw new Error(`Slack bookmarks.list: ${res.error}`);
+
+        return res.bookmarks || [];
+    }
+
+    /** Add a link bookmark to a channel - requires the bookmarks:write scope */
+    async addBookmark(channel: string, title: string, link: string): Promise<void> {
+        const res = await this.call('bookmarks.add', SlackResponse, { channel_id: channel, type: 'link', title, link });
+        if (!res.ok) console.error(`not ok - Slack bookmarks.add: ${res.error}`);
+    }
+
+    async editBookmark(channel: string, bookmark: string, title: string): Promise<void> {
+        const res = await this.call('bookmarks.edit', SlackResponse, { channel_id: channel, bookmark_id: bookmark, title });
+        if (!res.ok) console.error(`not ok - Slack bookmarks.edit: ${res.error}`);
+    }
+
     async setPurpose(channel: string, purpose: string): Promise<void> {
         const res = await this.call('conversations.setPurpose', SlackResponse, { channel, purpose: purpose.slice(0, 250) });
         if (!res.ok) console.error(`not ok - Slack conversations.setPurpose: ${res.error}`);
@@ -194,9 +253,45 @@ export default class Slack {
         if (!res.ok) console.error(`not ok - Slack conversations.setTopic: ${res.error}`);
     }
 
-    async post(channel: string, text: string): Promise<void> {
-        const res = await this.call('chat.postMessage', SlackResponse, { channel, text });
-        if (!res.ok) console.error(`not ok - Slack chat.postMessage: ${res.error}`);
+    /** Post a message - returns its timestamp, null if it could not be posted */
+    async post(channel: string, text: string): Promise<string | null> {
+        const res = await this.call('chat.postMessage', SlackPosted, { channel, text, unfurl_links: false });
+
+        if (!res.ok || !res.ts) {
+            console.error(`not ok - Slack chat.postMessage: ${res.error}`);
+            return null;
+        }
+
+        return res.ts;
+    }
+
+    /** Rewrite a message - `uneditable` if it was deleted or the workspace no longer allows editing it */
+    async update(channel: string, ts: string, text: string): Promise<'updated' | 'uneditable'> {
+        const res = await this.call('chat.update', SlackPosted, { channel, ts, text });
+
+        if (res.ok) return 'updated';
+        if (['message_not_found', 'cant_update_message', 'edit_window_closed'].includes(res.error || '')) return 'uneditable';
+
+        throw new Error(`Slack chat.update: ${res.error}`);
+    }
+
+    /** Pinned messages of a channel - requires the pins:read scope */
+    async pins(channel: string): Promise<Array<Static<typeof SlackMessage>>> {
+        const res = await this.call('pins.list', SlackPinList, { channel });
+        if (!res.ok) throw new Error(`Slack pins.list: ${res.error}`);
+
+        return (res.items || []).flatMap((item) => item.message ? [item.message] : []);
+    }
+
+    /** Pin a message to a channel - requires the pins:write scope */
+    async pin(channel: string, ts: string): Promise<void> {
+        const res = await this.call('pins.add', SlackResponse, { channel, timestamp: ts });
+        if (!res.ok && res.error !== 'already_pinned') console.error(`not ok - Slack pins.add: ${res.error}`);
+    }
+
+    async unpin(channel: string, ts: string): Promise<void> {
+        const res = await this.call('pins.remove', SlackResponse, { channel, timestamp: ts });
+        if (!res.ok && res.error !== 'no_pin') console.error(`not ok - Slack pins.remove: ${res.error}`);
     }
 
     /** Permalink of a channel in the workspace the token belongs to */

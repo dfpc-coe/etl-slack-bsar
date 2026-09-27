@@ -32,6 +32,10 @@
                 {
                     "resource": "board:event:delete",
                     "description": "Archives the Slack channel of a SAR CoreEvent when it is removed from the configured Board"
+                },
+                {
+                    "resource": "event:update",
+                    "description": "Rewrites the pinned message of the Slack channel of a SAR CoreEvent with its current details and mirrors its Links as bookmarks of that channel"
                 }
             ]
         }

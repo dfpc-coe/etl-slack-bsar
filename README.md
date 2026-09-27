@@ -4,11 +4,14 @@
 
 ## Flow
 
-This is an Outgoing only task subscribed to `board:event:create`. When a CoreEvent is placed on the
+This is an Outgoing only task subscribed to `board:event:*` and `event:update`. When a CoreEvent is placed on the
 configured Board, and its type is one of the configured SAR types, a Slack channel named
-`<prefix>-<date>-<event name>` is created, the configured users and User Group members are invited, and the Event details are posted.
+`<prefix>-<date>-<event name>` is created, the configured users and User Group members are invited, and the Event details are
+posted as a pinned message. The pinned message is rewritten with the current details whenever the CoreEvent is updated.
 
-The URL of the created channel is then appended to the `links` of the CoreEvent.
+The URL of the created channel is then appended to the `links` of the CoreEvent, and the `links` of the CoreEvent are
+mirrored as bookmarks of the channel - kept up to date whenever the CoreEvent is updated. Bookmarks are added and
+retitled but never removed.
 
 Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so an Event never gets a second channel.
 
@@ -18,7 +21,7 @@ Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so a
 
 | Environment | Description |
 | ----------- | ----------- |
-| `SLACK_TOKEN` | Slack User OAuth Token (`xoxp-`) with `channels:write`, `channels:read`, `groups:write`, `groups:read` & `chat:write` scopes (plus `usergroups:read` when `SLACK_USERGROUP` is set) - channels are created & messages posted as that User, so a shared service account is recommended |
+| `SLACK_TOKEN` | Slack User OAuth Token (`xoxp-`) with `channels:write`, `channels:read`, `groups:write`, `groups:read`, `chat:write`, `pins:read`, `pins:write`, `bookmarks:read` & `bookmarks:write` scopes (plus `usergroups:read` when `SLACK_USERGROUP` is set) - channels are created & messages posted as that User, so a shared service account is recommended |
 | `SLACK_PRIVATE` | Create private channels instead of public ones |
 | `SLACK_PREFIX` | Prefix of created channel names |
 | `SLACK_INVITE` | Slack User IDs invited to every created channel |

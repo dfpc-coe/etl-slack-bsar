@@ -5,11 +5,11 @@ import type { Event } from '@tak-ps/etl';
 import ETL, { SchemaType, handler as internal, local, DataFlowType, OutgoingMessageType, OutgoingAction } from '@tak-ps/etl';
 import Slack from './lib/slack.js';
 import Incidents from './lib/incident.js';
-import CoreEvents, { Placement } from './lib/cloudtak.js';
+import CoreEvents, { Placement, IncidentEvent } from './lib/cloudtak.js';
 
 const OutgoingInput = Type.Object({
     'SLACK_TOKEN': Type.String({
-        description: 'Slack User OAuth Token (xoxp-...) with channels:write, channels:read, groups:write, groups:read & chat:write scopes (plus usergroups:read if SLACK_USERGROUP is set) - channels are created & messages posted as that User'
+        description: 'Slack User OAuth Token (xoxp-...) with channels:write, channels:read, groups:write, groups:read, chat:write, pins:read, pins:write, bookmarks:read & bookmarks:write scopes (plus usergroups:read if SLACK_USERGROUP is set) - channels are created & messages posted as that User'
     }),
     'SLACK_PRIVATE': Type.Boolean({
         default: false,
@@ -72,6 +72,7 @@ export default class Task extends ETL {
 
         const slack = new Slack(env.SLACK_TOKEN);
         const incidents = new Incidents(slack, {
+            api: this.etl.api,
             prefix: env.SLACK_PREFIX,
             isPrivate: env.SLACK_PRIVATE,
             invite: env.SLACK_INVITE.map((u) => u.user),
@@ -89,6 +90,35 @@ export default class Task extends ETL {
         let created = 0;
 
         for (const message of Task.outgoingMessages(event)) {
+            // An updated CoreEvent with a channel => rewrite its pinned message & mirror its Links as bookmarks
+            if (message.type === OutgoingMessageType.Event) {
+                if (message.action !== OutgoingAction.Update) {
+                    debug(`skip - event message ${message.action} is not an ${OutgoingAction.Update}`);
+                    continue;
+                }
+
+                const updated = this.type(IncidentEvent, message.data);
+                const known = channels[updated.id];
+
+                if (!known) {
+                    debug(`skip - event ${updated.id} updated but has no channel`);
+                    continue;
+                }
+
+                const info = await slack.info(known);
+
+                if (!info || info.is_archived) {
+                    debug(`skip - event ${updated.id} channel ${known} is ${info ? 'archived' : 'missing'}`);
+                    continue;
+                }
+
+                debug(`event ${updated.id} updated, rewriting the pinned message & bookmarking ${(updated.links || []).length} link(s) in ${known}`);
+                await incidents.status(known, updated);
+                await incidents.bookmark(known, updated.links);
+
+                continue;
+            }
+
             if (message.type !== OutgoingMessageType.BoardEvent) {
                 debug(`skip - message ${message.type} is not a ${OutgoingMessageType.BoardEvent}`);
                 continue;
@@ -136,6 +166,7 @@ export default class Task extends ETL {
                 if (active.state !== 'missing') {
                     if (active.state === 'unarchived') {
                         await incidents.announce(known, placement.event, { reopened: true });
+                        await incidents.bookmark(known, placement.event.links);
                     }
 
                     await this.link(coreEvents, slack, placement.event.id, active.channel);
@@ -161,6 +192,7 @@ export default class Task extends ETL {
             created++;
 
             await incidents.announce(channel.id, placement.event, { reopened: channel.reopened });
+            await incidents.bookmark(channel.id, placement.event.links);
             await this.link(coreEvents, slack, placement.event.id, channel);
         }
 

@@ -12,6 +12,11 @@
 
 ### Pending Release
 
+### v1.7.0
+
+- :tada: Post the details of a CoreEvent as a pinned message of its Slack channel and rewrite it on every `event:update` - requiring the `pins:read` & `pins:write` scopes
+- :tada: Subscribe to `event:update` and mirror the Links of a CoreEvent as bookmarks of its Slack channel - also set when a channel is opened or reopened - requiring the `bookmarks:read` & `bookmarks:write` scopes
+
 ### v1.6.1
 
 - :rocket: The announcement posted when a channel is opened or reopened now mentions `@here`

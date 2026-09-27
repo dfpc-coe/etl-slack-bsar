@@ -2,32 +2,40 @@ import type { Static } from '@sinclair/typebox';
 import { Type } from '@sinclair/typebox';
 import type ETL from '@tak-ps/etl';
 
+export const CoreEventLink = Type.Object({
+    name: Type.String(),
+    url: Type.String()
+});
+
+export type Link = Static<typeof CoreEventLink>;
+
+// Subset of CloudTAK's CoreEventResponse this task relies on - carried by event:<action> messages
+export const IncidentEvent = Type.Object({
+    id: Type.String(),
+    name: Type.String(),
+    type: Type.String(),
+    created: Type.String(),
+    priority: Type.Optional(Type.String()),
+    location: Type.Optional(Type.String()),
+    remarks: Type.Optional(Type.String()),
+    links: Type.Optional(Type.Array(CoreEventLink)),
+    geometry: Type.Object({
+        type: Type.Literal('Point'),
+        coordinates: Type.Array(Type.Number())
+    })
+});
+
+export type IncidentEvent = Static<typeof IncidentEvent>;
+
 // Subset of CloudTAK's CoreEventBoardEventResponse this task relies on
 export const Placement = Type.Object({
     id: Type.String(),
     board: Type.String(),
-    event: Type.Object({
-        id: Type.String(),
-        name: Type.String(),
-        type: Type.String(),
-        created: Type.String(),
-        priority: Type.Optional(Type.String()),
-        location: Type.Optional(Type.String()),
-        remarks: Type.Optional(Type.String()),
-        geometry: Type.Object({
-            type: Type.Literal('Point'),
-            coordinates: Type.Array(Type.Number())
-        })
-    })
+    event: IncidentEvent
 });
 
-export type IncidentEvent = Static<typeof Placement>['event'];
-
 const CoreEventLinks = Type.Object({
-    links: Type.Array(Type.Object({
-        name: Type.String(),
-        url: Type.String()
-    }))
+    links: Type.Array(CoreEventLink)
 });
 
 /**

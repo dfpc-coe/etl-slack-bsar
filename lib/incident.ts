@@ -1,23 +1,30 @@
 import type { Static } from '@sinclair/typebox';
 import type Slack from './slack.js';
 import type { SlackChannelInfo } from './slack.js';
-import type { IncidentEvent } from './cloudtak.js';
+import type { IncidentEvent, Link } from './cloudtak.js';
 
 export type IncidentChannel = Static<typeof SlackChannelInfo> & { reopened: boolean };
+
+/** Slack reads &, < and > of a message as control characters */
+function escape(text: string): string {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 /**
  * The Slack channel of a SAR incident - naming, opening & announcing
  */
 export default class Incidents {
     slack: Slack;
+    api: string;
     prefix: string;
     isPrivate: boolean;
     invite: string[];
     usergroup?: string;
     members?: Promise<string[]>;
 
-    constructor(slack: Slack, opts: { prefix: string, isPrivate: boolean, invite: string[], usergroup?: string }) {
+    constructor(slack: Slack, opts: { api: string, prefix: string, isPrivate: boolean, invite: string[], usergroup?: string }) {
         this.slack = slack;
+        this.api = opts.api;
         this.prefix = opts.prefix;
         this.isPrivate = opts.isPrivate;
         this.invite = opts.invite;
@@ -87,21 +94,93 @@ export default class Incidents {
     }
 
     /**
-     * Post the current state of the Event, notifying everyone in the channel
-     * with @here - a reopened channel always states the remarks, even when empty
+     * Mirror the Links of the Event as channel bookmarks - added by URL,
+     * retitled when the Link is renamed, never removed. The Link back to the
+     * channel itself is skipped
+     */
+    async bookmark(channel: string, links: Link[] = []): Promise<void> {
+        const self = await this.slack.channelUrl(channel);
+        const wanted = links.filter((link) => link.url && link.url !== self);
+        if (!wanted.length) return;
+
+        const existing = new Map((await this.slack.bookmarks(channel))
+            .filter((b) => b.link)
+            .map((b) => [b.link as string, b]));
+
+        for (const link of wanted) {
+            const current = existing.get(link.url);
+
+            if (!current) {
+                await this.slack.addBookmark(channel, link.name, link.url);
+            } else if (current.title !== link.name) {
+                await this.slack.editBookmark(channel, current.id, link.name);
+            }
+        }
+    }
+
+    details(event: IncidentEvent, opts: { reopened?: boolean } = {}): string[] {
+        const [lng, lat] = event.geometry.coordinates;
+        const remarks = escape(event.remarks || '');
+
+        return [
+            event.priority ? `Priority: ${escape(event.priority)}` : '',
+            event.location ? `Location: ${escape(event.location)}` : '',
+            `Coordinates: ${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+            opts.reopened ? `Remarks: ${remarks || 'none'}` : remarks
+        ].filter(Boolean);
+    }
+
+    /**
+     * Write the current state of the Event to the pinned message of the
+     * channel, recognised by its link back to the Event - posted & pinned if
+     * the channel has none. Only a newly posted message can mention @here
+     */
+    async status(channel: string, event: IncidentEvent, opts: { mention?: boolean } = {}): Promise<void> {
+        const path = `/event/${event.id}`;
+
+        const text = [
+            `*${escape(event.name)}*`,
+            ...this.details(event),
+            `<${new URL(path, this.api).toString()}|Open in CloudTAK>`
+        ].join('\n');
+
+        let pinned: Awaited<ReturnType<Slack['pins']>> = [];
+
+        try {
+            pinned = await this.slack.pins(channel);
+        } catch (err) {
+            console.error(`not ok - failed to list the pinned messages of ${channel}:`, err);
+            if (!opts.mention) return;
+        }
+
+        const current = pinned.find((message) => message.text?.includes(path));
+
+        if (current) {
+            if (current.text?.replace(/^<!here> /, '') === text) return;
+            if (await this.slack.update(channel, current.ts, text) === 'updated') return;
+
+            await this.slack.unpin(channel, current.ts);
+        }
+
+        const ts = await this.slack.post(channel, opts.mention ? `<!here> ${text}` : text);
+        if (ts) await this.slack.pin(channel, ts);
+    }
+
+    /**
+     * Notify everyone in the channel with @here - a new channel by its pinned
+     * message, a reopened channel by a message that always states the remarks,
+     * even when empty, alongside its refreshed pinned message
      */
     async announce(channel: string, event: IncidentEvent, opts: { reopened?: boolean } = {}): Promise<void> {
-        const [lng, lat] = event.geometry.coordinates;
-
-        const lines = [
-            opts.reopened ? `<!here> *Reopened: ${event.name}*` : `<!here> *${event.name}*`,
-            event.priority ? `Priority: ${event.priority}` : null,
-            event.location ? `Location: ${event.location}` : null,
-            `Coordinates: ${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-            opts.reopened ? `Remarks: ${event.remarks || 'none'}` : (event.remarks || null)
-        ].filter(Boolean);
-
         await this.slack.setTopic(channel, event.name);
-        await this.slack.post(channel, lines.join('\n'));
+
+        if (opts.reopened) {
+            await this.slack.post(channel, [
+                `<!here> *Reopened: ${escape(event.name)}*`,
+                ...this.details(event, { reopened: true })
+            ].join('\n'));
+        }
+
+        await this.status(channel, event, { mention: !opts.reopened });
     }
 }
