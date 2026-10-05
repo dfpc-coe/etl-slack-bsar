@@ -12,6 +12,10 @@
 
 ### Pending Release
 
+### v1.8.1
+
+- :rocket: Use channel name instead of int
+
 ### v1.8.0
 
 - :tada: Replace `BOARD` with a `TRIGGER` union rendered as a variant picker - **Board Placement** keeps the existing Board flow while **Channel Event** opens a channel for every SAR CoreEvent created in a TAK Server Channel, requiring an `event:create` subscription

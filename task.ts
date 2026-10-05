@@ -19,8 +19,8 @@ const BoardTrigger = Type.Object({
 
 const ChannelTrigger = Type.Object({
     Mode: Type.Literal('Channel'),
-    CHANNEL: Type.Integer({
-        description: 'TAK Server Channel ID (bitpos) - the Layer Connection must also be a member of this Channel'
+    CHANNEL: Type.String({
+        description: 'TAK Server Channel ID - the Layer Connection must also be a member of this Channel'
     })
 }, {
     title: 'Channel Event',
@@ -200,7 +200,7 @@ export default class Task extends ETL {
                 return;
             }
 
-            if (!message.channels.includes(ctx.trigger.CHANNEL)) {
+            if (!message.channels.map(String).includes(ctx.trigger.CHANNEL)) {
                 ctx.debug(`skip - event ${incident.id} is not shared with channel ${ctx.trigger.CHANNEL}`);
                 return;
             }

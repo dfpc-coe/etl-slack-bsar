@@ -35,7 +35,7 @@ Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so a
 | `SLACK_PREFIX` | Prefix of created channel names |
 | `SLACK_INVITE` | Slack User IDs invited to every created channel |
 | `SLACK_USERGROUP` | Optional Slack User Group, by `@handle` or name, whose members are invited to every created channel - User Groups are a paid Slack feature |
-| `TRIGGER` | **Board Placement** with the ID of the CoreEvent Board to watch, or **Channel Event** with the TAK Server Channel ID (bitpos) to watch |
+| `TRIGGER` | **Board Placement** with the ID of the CoreEvent Board to watch, or **Channel Event** with the TAK Server Channel ID to watch |
 | `SAR_TYPES` | MIL-STD-2525E Symbol IDs considered SAR - every Event is accepted if empty |
 
 ## Slack Installation
