@@ -1,13 +1,22 @@
 <h1 align='center'>ETL-Slack-BSAR</h1>
 
-<p align='center'>Create a Slack channel for every SAR CoreEvent placed on a CloudTAK Board</p>
+<p align='center'>Create a Slack channel for every SAR CoreEvent placed on a CloudTAK Board or created in a TAK Server Channel</p>
 
 ## Flow
 
-This is an Outgoing only task subscribed to `board:event:*` and `event:update`. When a CoreEvent is placed on the
-configured Board, and its type is one of the configured SAR types, a Slack channel named
-`<prefix>-<date>-<event name>` is created, the configured users and User Group members are invited, and the Event details are
-posted as a pinned message. The pinned message is rewritten with the current details whenever the CoreEvent is updated.
+This is an Outgoing only task. The `TRIGGER` environment picks what starts the Slack flow:
+
+- **Board Placement** - subscribe to `board:event:*`, `event:update` & `event:delete`. When a CoreEvent is placed on the configured Board,
+  and its type is one of the configured SAR types, a channel is opened. Moving the Event on the Board revives an
+  archived channel and removing it from the Board archives the channel, keeping the mapping so a re-placed Event
+  gets the same channel back.
+- **Channel Event** - subscribe to `event:*`. When a CoreEvent is created in the configured TAK Server Channel, and its
+  type is one of the configured SAR types, a channel is opened. The Layer's Connection must also be a member of the
+  Channel for the Event to be delivered to the Layer.
+
+In both modes the channel is named `<prefix>-<date>-<event name>`, the configured users and User Group members are
+invited, and the Event details are posted as a pinned message. The pinned message is rewritten with the current details
+whenever the CoreEvent is updated, and the channel is archived when the CoreEvent is deleted.
 
 The URL of the created channel is then appended to the `links` of the CoreEvent, and the `links` of the CoreEvent are
 mirrored as bookmarks of the channel - kept up to date whenever the CoreEvent is updated. Bookmarks are added and
@@ -26,8 +35,8 @@ Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so a
 | `SLACK_PREFIX` | Prefix of created channel names |
 | `SLACK_INVITE` | Slack User IDs invited to every created channel |
 | `SLACK_USERGROUP` | Optional Slack User Group, by `@handle` or name, whose members are invited to every created channel - User Groups are a paid Slack feature |
-| `BOARD` | ID of the CoreEvent Board to watch |
-| `SAR_TYPES` | MIL-STD-2525E Symbol IDs considered SAR - every Event placed on the Board is accepted if empty |
+| `TRIGGER` | **Board Placement** with the ID of the CoreEvent Board to watch, or **Channel Event** with the TAK Server Channel ID (bitpos) to watch |
+| `SAR_TYPES` | MIL-STD-2525E Symbol IDs considered SAR - every Event is accepted if empty |
 
 ## Slack Installation
 
@@ -44,7 +53,7 @@ Bot, which is automatically a member of every channel it creates.
 {
     "display_information": {
         "name": "CloudTAK BSAR",
-        "description": "Create a Slack channel for every SAR CoreEvent placed on a CloudTAK Board",
+        "description": "Create a Slack channel for every SAR CoreEvent placed on a CloudTAK Board or created in a TAK Server Channel",
         "background_color": "#1f2937"
     },
     "features": {

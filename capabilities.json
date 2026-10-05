@@ -1,7 +1,7 @@
 {
     "version": "1.0",
     "name": "Slack BSAR",
-    "description": "Creates a Slack channel for every SAR CoreEvent placed on a configured CoreEvent Board.",
+    "description": "Creates a Slack channel for every SAR CoreEvent placed on a CoreEvent Board or created in a TAK Server Channel.",
     "compute": {
         "memory": 256,
         "timeout": 60
@@ -22,20 +22,28 @@
         "outgoing": {
             "types": [
                 {
+                    "resource": "event:create",
+                    "description": "Creates a Slack channel when a SAR CoreEvent is created in the configured Channel (Channel Event trigger), unarchiving it if it already exists"
+                },
+                {
                     "resource": "board:event:create",
-                    "description": "Creates a Slack channel when a SAR CoreEvent is first placed on the configured Board, unarchiving it if it already exists"
+                    "description": "Creates a Slack channel when a SAR CoreEvent is first placed on the configured Board (Board Placement trigger), unarchiving it if it already exists"
                 },
                 {
                     "resource": "board:event:update",
-                    "description": "Unarchives the Slack channel of a SAR CoreEvent when it is moved on the configured Board and ensures the channel is linked from the CoreEvent"
+                    "description": "Unarchives the Slack channel of a SAR CoreEvent when it is moved on the configured Board (Board Placement trigger) and ensures the channel is linked from the CoreEvent"
                 },
                 {
                     "resource": "board:event:delete",
-                    "description": "Archives the Slack channel of a SAR CoreEvent when it is removed from the configured Board"
+                    "description": "Archives the Slack channel of a SAR CoreEvent when it is removed from the configured Board (Board Placement trigger)"
                 },
                 {
                     "resource": "event:update",
                     "description": "Rewrites the pinned message of the Slack channel of a SAR CoreEvent with its current details and mirrors its Links as bookmarks of that channel"
+                },
+                {
+                    "resource": "event:delete",
+                    "description": "Archives the Slack channel of a SAR CoreEvent when the CoreEvent is deleted"
                 }
             ]
         }

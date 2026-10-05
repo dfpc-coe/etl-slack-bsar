@@ -12,6 +12,12 @@
 
 ### Pending Release
 
+### v1.8.0
+
+- :tada: Replace `BOARD` with a `TRIGGER` union rendered as a variant picker - **Board Placement** keeps the existing Board flow while **Channel Event** opens a channel for every SAR CoreEvent created in a TAK Server Channel, requiring an `event:create` subscription
+- :tada: Subscribe to `event:delete` to archive the Slack channel of a CoreEvent when the CoreEvent is deleted
+- :rocket: Layers configured with a top level `BOARD` keep working as a Board Placement trigger
+
 ### v1.7.0
 
 - :tada: Post the details of a CoreEvent as a pinned message of its Slack channel and rewrite it on every `event:update` - requiring the `pins:read` & `pins:write` scopes
