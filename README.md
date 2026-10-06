@@ -30,7 +30,7 @@ Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so a
 
 | Environment | Description |
 | ----------- | ----------- |
-| `SLACK_TOKEN` | Slack Bot User OAuth Token (`xoxb-`) with `channels:manage`, `channels:read`, `groups:write`, `groups:read`, `chat:write`, `pins:read`, `pins:write`, `bookmarks:read`, `bookmarks:write` & `usergroups:read` scopes - see [Slack Installation](#slack-installation). A User OAuth Token (`xoxp-`) with the equivalent user scopes (`channels:write` in place of `channels:manage`) also works, in which case channels are created & messages posted as that User |
+| `SLACK_TOKEN` | Slack User OAuth Token (`xoxp-`) with `channels:write`, `channels:read`, `groups:write`, `groups:read`, `chat:write`, `pins:read`, `pins:write`, `bookmarks:read`, `bookmarks:write` & `usergroups:read` user scopes - see [Slack Installation](#slack-installation). Channels are created & messages posted as the User that installed the App. A Bot User OAuth Token (`xoxb-`) with the equivalent bot scopes (`channels:manage` in place of `channels:write`) also works |
 | `SLACK_PRIVATE` | Create private channels instead of public ones |
 | `SLACK_PREFIX` | Prefix of created channel names |
 | `SLACK_INVITE` | Slack User IDs invited to every created channel |
@@ -40,8 +40,8 @@ Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so a
 
 ## Slack Installation
 
-The ETL authenticates as the App's Bot User via a Bot User OAuth Token. Channels are created & messages posted as the
-Bot, which is automatically a member of every channel it creates.
+The ETL authenticates as the User that installs the App via a User OAuth Token. Channels are created & messages
+posted as that User, who is automatically a member of every channel they create - so the App has no Bot User.
 
 1. Navigate to [Slack App Management](https://app.slack.com/apps-manage/) and select the workspace you want to install
    the integration into
@@ -56,17 +56,11 @@ Bot, which is automatically a member of every channel it creates.
         "description": "Create a Slack channel for every SAR CoreEvent placed on a CloudTAK Board or created in a TAK Server Channel",
         "background_color": "#1f2937"
     },
-    "features": {
-        "bot_user": {
-            "display_name": "CloudTAK BSAR",
-            "always_online": true
-        }
-    },
     "oauth_config": {
         "scopes": {
-            "bot": [
+            "user": [
                 "channels:read",
-                "channels:manage",
+                "channels:write",
                 "groups:read",
                 "groups:write",
                 "chat:write",
@@ -86,9 +80,9 @@ Bot, which is automatically a member of every channel it creates.
 }
 ```
 
-5. Review the App summary and then select **Create & Install**
-6. Click **Go To App Settings**, select **OAuth & Permissions** on the left, and copy the **Bot User OAuth Token**
-   (`xoxb-`) into the `SLACK_TOKEN` field of the CloudTAK Layer
+5. Review the App summary and then select **Create & Install** - install it as the User the channels should be created by
+6. Click **Go To App Settings**, select **OAuth & Permissions** on the left, and copy the **User OAuth Token**
+   (`xoxp-`) into the `SLACK_TOKEN` field of the CloudTAK Layer
 
 ## Development
 

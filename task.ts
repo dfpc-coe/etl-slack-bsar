@@ -35,7 +35,7 @@ type Trigger = Static<typeof Trigger>;
 
 const OutgoingInput = Type.Object({
     'SLACK_TOKEN': Type.String({
-        description: 'Slack Bot User OAuth Token (xoxb-...) with channels:manage, channels:read, groups:write, groups:read, chat:write, pins:read, pins:write, bookmarks:read & bookmarks:write scopes (plus usergroups:read if SLACK_USERGROUP is set) - a User OAuth Token (xoxp-...) with the equivalent user scopes also works'
+        description: 'Slack User OAuth Token (xoxp-...) with channels:write, channels:read, groups:write, groups:read, chat:write, pins:read, pins:write, bookmarks:read & bookmarks:write user scopes (plus usergroups:read if SLACK_USERGROUP is set) - a Bot User OAuth Token (xoxb-...) with the equivalent bot scopes also works'
     }),
     'SLACK_PRIVATE': Type.Boolean({
         default: false,

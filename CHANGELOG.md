@@ -12,6 +12,8 @@
 
 ### Pending Release
 
+- :pencil2: Install the Slack App with user scopes & a User OAuth Token (`xoxp-`) instead of a Bot User - the manifest no longer declares a `bot_user` and `SLACK_TOKEN` documents the user token first
+
 ### v1.8.1
 
 - :rocket: Use channel name instead of int
