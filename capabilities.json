@@ -39,7 +39,7 @@
                 },
                 {
                     "resource": "event:update",
-                    "description": "Rewrites the pinned message of the Slack channel of a SAR CoreEvent with its current details and mirrors its Links as bookmarks of that channel"
+                    "description": "Rewrites the pinned message of the Slack channel of a SAR CoreEvent with its current details and mirrors its Links as bookmarks of that channel - opening the channel if the CoreEvent qualifies for the trigger but has none, and unarchiving it in Channel mode"
                 },
                 {
                     "resource": "event:delete",

@@ -11,12 +11,15 @@ This is an Outgoing only task. The `TRIGGER` environment picks what starts the S
   archived channel and removing it from the Board archives the channel, keeping the mapping so a re-placed Event
   gets the same channel back.
 - **Channel Event** - subscribe to `event:*`. When a CoreEvent is created in the configured TAK Server Channel, and its
-  type is one of the configured SAR types, a channel is opened. The Layer's Connection must also be a member of the
+  type is one of the configured SAR types, a channel is opened. Deleting the CoreEvent archives the channel, and
+  updating a CoreEvent whose channel was archived revives it. The Layer's Connection must also be a member of the
   Channel for the Event to be delivered to the Layer.
 
 In both modes the channel is named `<prefix>-<date>-<event name>`, the configured users and User Group members are
 invited, and the Event details are posted as a pinned message. The pinned message is rewritten with the current details
-whenever the CoreEvent is updated, and the channel is archived when the CoreEvent is deleted.
+whenever the CoreEvent is updated, and the channel is archived when the CoreEvent is deleted. An updated CoreEvent that
+qualifies for the trigger but has no channel - because the opening message was missed or failed, or Slack no longer
+knows the channel - has one opened then, so an incident is never left without a channel.
 
 The URL of the created channel is then appended to the `links` of the CoreEvent, and the `links` of the CoreEvent are
 mirrored as bookmarks of the channel - kept up to date whenever the CoreEvent is updated. Bookmarks are added and

@@ -19,6 +19,10 @@ export const IncidentEvent = Type.Object({
     location: Type.Optional(Type.String()),
     remarks: Type.Optional(Type.String()),
     links: Type.Optional(Type.Array(CoreEventLink)),
+    boards: Type.Optional(Type.Array(Type.Object({
+        id: Type.String(),
+        column: Type.Union([Type.Null(), Type.String()], { description: 'null when the Event is not placed on the Board' })
+    }))),
     geometry: Type.Object({
         type: Type.Literal('Point'),
         coordinates: Type.Array(Type.Number())

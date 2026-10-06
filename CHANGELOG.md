@@ -12,6 +12,10 @@
 
 ### Pending Release
 
+### v1.9.0
+
+- :rocket: Open the channel of a CoreEvent on `event:update` when it qualifies for the trigger but has none - recovering from a missed or failed `event:create`/`board:event:create` or a channel Slack no longer knows. In Board mode the Event must be placed on the configured Board
+- :rocket: In Channel mode an `event:update` reopens the archived channel of a CoreEvent, as a Board placement does in Board mode
 - :pencil2: Install the Slack App with user scopes & a User OAuth Token (`xoxp-`) instead of a Bot User - the manifest no longer declares a `bot_user` and `SLACK_TOKEN` documents the user token first
 
 ### v1.8.1

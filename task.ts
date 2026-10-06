@@ -158,8 +158,10 @@ export default class Task extends ETL {
     }
 
     /**
-     * event:<action> - an updated CoreEvent with a channel rewrites its pinned message & bookmarks in any mode,
-     * a deleted CoreEvent archives its channel, and in Channel mode a CoreEvent created in the Channel opens one
+     * event:<action> - a deleted CoreEvent archives its channel and an updated CoreEvent with a live channel
+     * rewrites its pinned message & bookmarks in any mode. A created CoreEvent, or an updated one whose channel
+     * was never opened, is no longer known to Slack or (in Channel mode) was archived, opens or reopens a channel
+     * when the Event qualifies for the trigger - so a missed or failed message is recovered by the next update
      */
     async event(ctx: Context, message: Static<typeof OutgoingEventMessage>): Promise<void> {
         const incident = this.type(IncidentEvent, message.data);
@@ -167,23 +169,7 @@ export default class Task extends ETL {
 
         ctx.debug(`event ${incident.id} ${message.action} type=${incident.type} name=${incident.name} channels=[${message.channels.join(',')}]`);
 
-        if (message.action === OutgoingAction.Update) {
-            if (!known) {
-                ctx.debug(`skip - event ${incident.id} updated but has no channel`);
-                return;
-            }
-
-            const info = await ctx.slack.info(known);
-
-            if (!info || info.is_archived) {
-                ctx.debug(`skip - event ${incident.id} channel ${known} is ${info ? 'archived' : 'missing'}`);
-                return;
-            }
-
-            ctx.debug(`event ${incident.id} updated, rewriting the pinned message & bookmarking ${(incident.links || []).length} link(s) in ${known}`);
-            await ctx.incidents.status(known, incident);
-            await ctx.incidents.bookmark(known, incident.links);
-        } else if (message.action === OutgoingAction.Delete) {
+        if (message.action === OutgoingAction.Delete) {
             if (!known) {
                 ctx.debug(`skip - event ${incident.id} deleted but has no channel`);
                 return;
@@ -194,24 +180,62 @@ export default class Task extends ETL {
 
             delete ctx.channels[incident.id];
             ctx.changed = true;
-        } else {
-            if (ctx.trigger.Mode !== 'Channel') {
-                ctx.debug(`skip - event ${incident.id} created but mode is ${ctx.trigger.Mode}`);
-                return;
-            }
-
-            if (!message.channels.map(String).includes(ctx.trigger.CHANNEL)) {
-                ctx.debug(`skip - event ${incident.id} is not shared with channel ${ctx.trigger.CHANNEL}`);
-                return;
-            }
-
-            if (ctx.types.size && !ctx.types.has(incident.type)) {
-                ctx.debug(`skip - type ${incident.type} is not in SAR_TYPES`);
-                return;
-            }
-
-            await this.open(ctx, incident);
+            return;
         }
+
+        if (message.action === OutgoingAction.Update && known) {
+            const info = await ctx.slack.info(known);
+
+            if (info && !info.is_archived) {
+                ctx.debug(`event ${incident.id} updated, rewriting the pinned message & bookmarking ${(incident.links || []).length} link(s) in ${known}`);
+                await ctx.incidents.status(known, incident);
+                await ctx.incidents.bookmark(known, incident.links);
+                return;
+            }
+
+            // In Board mode an archived channel means the Event left the Board - only a placement revives it
+            if (info && ctx.trigger.Mode !== 'Channel') {
+                ctx.debug(`skip - event ${incident.id} channel ${known} is archived`);
+                return;
+            }
+
+            if (info) {
+                ctx.debug(`event ${incident.id} channel ${known} is archived, reopening`);
+            } else {
+                ctx.debug(`event ${incident.id} channel ${known} is missing, opening a new one`);
+                delete ctx.channels[incident.id];
+                ctx.changed = true;
+            }
+        }
+
+        const skip = this.qualifies(ctx, incident, message.channels);
+        if (skip) {
+            ctx.debug(`skip - event ${incident.id} ${skip}`);
+            return;
+        }
+
+        await this.open(ctx, incident);
+    }
+
+    /** Why the Event does not warrant a channel under the trigger, or null if it does */
+    qualifies(ctx: Context, incident: IncidentEvent, channels: number[]): string | null {
+        if (ctx.trigger.Mode === 'Channel') {
+            if (!channels.map(String).includes(ctx.trigger.CHANNEL)) {
+                return `is not shared with channel ${ctx.trigger.CHANNEL}`;
+            }
+        } else {
+            const board = ctx.trigger.BOARD;
+
+            if (!(incident.boards || []).some((b) => b.id === board && b.column)) {
+                return `is not placed on board ${board}`;
+            }
+        }
+
+        if (ctx.types.size && !ctx.types.has(incident.type)) {
+            return `type ${incident.type} is not in SAR_TYPES`;
+        }
+
+        return null;
     }
 
     /**
