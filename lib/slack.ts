@@ -82,6 +82,16 @@ const SlackAuth = Type.Object({
     user_id: Type.Optional(Type.String({ description: 'Slack User ID the token acts as' }))
 });
 
+export type SlackText = { type: 'plain_text', text: string, emoji?: boolean } | { type: 'mrkdwn', text: string };
+
+export type SlackBlock =
+    { type: 'header', text: SlackText }
+    | { type: 'section', text?: SlackText, fields?: SlackText[] }
+    | { type: 'actions', elements: Array<{ type: 'button', text: SlackText, url: string, style?: 'primary' | 'danger' }> }
+    | { type: 'context', elements: SlackText[] };
+
+export type SlackCard = { color: string, blocks: SlackBlock[] };
+
 export type ChannelState =
     { state: 'active' | 'unarchived', channel: Static<typeof SlackChannelInfo> }
     | { state: 'missing' };
@@ -253,9 +263,17 @@ export default class Slack {
         if (!res.ok) console.error(`not ok - Slack conversations.setTopic: ${res.error}`);
     }
 
-    /** Post a message - returns its timestamp, null if it could not be posted */
-    async post(channel: string, text: string): Promise<string | null> {
-        const res = await this.call('chat.postMessage', SlackPosted, { channel, text, unfurl_links: false });
+    /**
+     * Post a message - with a Block Kit card as a colour striped attachment when given,
+     * `text` then being the notification fallback. Returns its timestamp, null if it could not be posted
+     */
+    async post(channel: string, text: string, card?: SlackCard): Promise<string | null> {
+        const res = await this.call('chat.postMessage', SlackPosted, {
+            channel,
+            text,
+            unfurl_links: false,
+            ...(card ? { attachments: JSON.stringify([card]) } : {})
+        });
 
         if (!res.ok || !res.ts) {
             console.error(`not ok - Slack chat.postMessage: ${res.error}`);
@@ -266,8 +284,13 @@ export default class Slack {
     }
 
     /** Rewrite a message - `uneditable` if it was deleted or the workspace no longer allows editing it */
-    async update(channel: string, ts: string, text: string): Promise<'updated' | 'uneditable'> {
-        const res = await this.call('chat.update', SlackPosted, { channel, ts, text });
+    async update(channel: string, ts: string, text: string, card?: SlackCard): Promise<'updated' | 'uneditable'> {
+        const res = await this.call('chat.update', SlackPosted, {
+            channel,
+            ts,
+            text,
+            attachments: JSON.stringify(card ? [card] : [])
+        });
 
         if (res.ok) return 'updated';
         if (['message_not_found', 'cant_update_message', 'edit_window_closed'].includes(res.error || '')) return 'uneditable';

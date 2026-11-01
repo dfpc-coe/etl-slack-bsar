@@ -10,11 +10,16 @@
 
 ## Version History
 
+### Pending Release
+
+### v1.11.0
+
+- :rocket: Post the pinned message & the reopened notice of an incident channel as Block Kit cards - a priority coloured stripe, the Event details as a field grid, the remarks & an Open in CloudTAK button - keeping the full details as the fallback text the pinned message is recognised & compared by
+- :tada: Add an optional `SLACK_ANNOUNCE` main channel, by ID or `#name`, where a Block Kit incident card is posted whenever an incident channel is opened or reopened - a priority coloured stripe, the Event details, the first 200 characters of the remarks, a button into the incident channel & a button to the CoreEvent in CloudTAK
+
 ### v1.10.0
 
 - :arrow_up: Update Core Dependencies
-
-### Pending Release
 
 ### v1.9.0
 

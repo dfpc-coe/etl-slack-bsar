@@ -54,6 +54,9 @@ const OutgoingInput = Type.Object({
     'SLACK_USERGROUP': Type.Optional(Type.String({
         description: 'Slack User Group (@handle or name - ie: @sar-team) whose members are invited to every created channel - requires the usergroups:read scope'
     })),
+    'SLACK_ANNOUNCE': Type.Optional(Type.String({
+        description: 'Main channel (ID - ie: C012AB3CD - or #name) where an incident message linking to the incident channel is posted whenever one is opened or reopened - the token User must be a member of it'
+    })),
     'TRIGGER': Trigger,
     'SAR_TYPES': Type.Array(Type.Object({
         type: Type.String({ description: 'MIL-STD-2525E Symbol ID' })
@@ -127,7 +130,8 @@ export default class Task extends ETL {
                 prefix: env.SLACK_PREFIX,
                 isPrivate: env.SLACK_PRIVATE,
                 invite: env.SLACK_INVITE.map((u) => u.user),
-                usergroup: env.SLACK_USERGROUP
+                usergroup: env.SLACK_USERGROUP,
+                announce: env.SLACK_ANNOUNCE
             }),
             coreEvents: new CoreEvents(this),
             debug: (msg: string) => {
@@ -138,7 +142,7 @@ export default class Task extends ETL {
         };
 
         const target = trigger.Mode === 'Board' ? `board=${trigger.BOARD}` : `channel=${trigger.CHANNEL}`;
-        ctx.debug(`mode=${trigger.Mode} ${target} sar_types=[${[...ctx.types].join(',')}] known_channels=${Object.keys(ctx.channels).length} records=${event.Records.length}`);
+        ctx.debug(`mode=${trigger.Mode} ${target} announce=${ctx.incidents.announceChannel || 'none'} sar_types=[${[...ctx.types].join(',')}] known_channels=${Object.keys(ctx.channels).length} records=${event.Records.length}`);
 
         for (const message of Task.outgoingMessages(event)) {
             if (message.type === OutgoingMessageType.Event) {
@@ -301,6 +305,7 @@ export default class Task extends ETL {
                 if (active.state === 'unarchived') {
                     await ctx.incidents.announce(known, incident, { reopened: true });
                     await ctx.incidents.bookmark(known, incident.links);
+                    await ctx.incidents.broadcast(active.channel, incident, { reopened: true });
                 }
 
                 await this.link(ctx, incident.id, active.channel);
@@ -326,6 +331,7 @@ export default class Task extends ETL {
 
         await ctx.incidents.announce(channel.id, incident, { reopened: channel.reopened });
         await ctx.incidents.bookmark(channel.id, incident.links);
+        await ctx.incidents.broadcast(channel, incident, { reopened: channel.reopened });
         await this.link(ctx, incident.id, channel);
     }
 

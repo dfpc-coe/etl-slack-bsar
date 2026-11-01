@@ -16,7 +16,8 @@ This is an Outgoing only task. The `TRIGGER` environment picks what starts the S
   Channel for the Event to be delivered to the Layer.
 
 In both modes the channel is named `<prefix>-<date>-<event name>`, the configured users and User Group members are
-invited, and the Event details are posted as a pinned message. The pinned message is rewritten with the current details
+invited, and the Event details are posted as a pinned Block Kit card with a stripe coloured by the Event priority. The
+pinned message is rewritten with the current details
 whenever the CoreEvent is updated, and the channel is archived when the CoreEvent is deleted. An updated CoreEvent that
 qualifies for the trigger but has no channel - because the opening message was missed or failed, or Slack no longer
 knows the channel - has one opened then, so an incident is never left without a channel.
@@ -26,6 +27,11 @@ mirrored as bookmarks of the channel - kept up to date whenever the CoreEvent is
 retitled but never removed.
 
 Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so an Event never gets a second channel.
+
+If `SLACK_ANNOUNCE` names a main channel, an incident card is posted there whenever a channel is opened or reopened - so a
+team watching one channel learns of every new incident. The card carries a stripe coloured by the Event priority, the
+Event details, the first 200 characters of the remarks, a button into the incident channel and a button to the CoreEvent
+in CloudTAK - the pinned card in the incident channel carries the remarks in full.
 
 | Permission | Required | Description |
 | ---------- | -------- | ----------- |
@@ -38,6 +44,7 @@ Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so a
 | `SLACK_PREFIX` | Prefix of created channel names |
 | `SLACK_INVITE` | Slack User IDs invited to every created channel |
 | `SLACK_USERGROUP` | Optional Slack User Group, by `@handle` or name, whose members are invited to every created channel - User Groups are a paid Slack feature |
+| `SLACK_ANNOUNCE` | Optional main channel, by ID or `#name`, where an incident card linking to the incident channel is posted whenever one is opened or reopened - the token User must be a member of it |
 | `TRIGGER` | **Board Placement** with the ID of the CoreEvent Board to watch, or **Channel Event** with the TAK Server Channel ID to watch |
 | `SAR_TYPES` | MIL-STD-2525E Symbol IDs considered SAR - every Event is accepted if empty |
 
