@@ -53,7 +53,10 @@ const SlackPosted = Type.Object({
 
 export const SlackMessage = Type.Object({
     ts: Type.String(),
-    text: Type.Optional(Type.String())
+    text: Type.Optional(Type.String()),
+    attachments: Type.Optional(Type.Array(Type.Object({
+        fallback: Type.Optional(Type.String())
+    })))
 });
 
 const SlackPinList = Type.Object({
@@ -265,14 +268,14 @@ export default class Slack {
 
     /**
      * Post a message - with a Block Kit card as a colour striped attachment when given,
-     * `text` then being the notification fallback. Returns its timestamp, null if it could not be posted
+     * `text` then being its fallback for notifications & search rather than a rendered body.
+     * Returns its timestamp, null if it could not be posted
      */
     async post(channel: string, text: string, card?: SlackCard): Promise<string | null> {
         const res = await this.call('chat.postMessage', SlackPosted, {
             channel,
-            text,
             unfurl_links: false,
-            ...(card ? { attachments: JSON.stringify([card]) } : {})
+            ...(card ? { attachments: JSON.stringify([{ fallback: text, ...card }]) } : { text })
         });
 
         if (!res.ok || !res.ts) {
@@ -283,13 +286,17 @@ export default class Slack {
         return res.ts;
     }
 
-    /** Rewrite a message - `uneditable` if it was deleted or the workspace no longer allows editing it */
+    /**
+     * Rewrite a message - a card replaces any rendered text with its fallback, so a message
+     * once posted as text & card becomes card only. `uneditable` if it was deleted or the
+     * workspace no longer allows editing it
+     */
     async update(channel: string, ts: string, text: string, card?: SlackCard): Promise<'updated' | 'uneditable'> {
         const res = await this.call('chat.update', SlackPosted, {
             channel,
             ts,
-            text,
-            attachments: JSON.stringify(card ? [card] : [])
+            text: card ? '' : text,
+            attachments: JSON.stringify(card ? [{ fallback: text, ...card }] : [])
         });
 
         if (res.ok) return 'updated';

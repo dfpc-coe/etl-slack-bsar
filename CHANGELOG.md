@@ -12,6 +12,10 @@
 
 ### Pending Release
 
+### v1.11.1
+
+- :bug: Send the text of a Block Kit card message as the attachment fallback rather than the message body, so the pinned message, the reopened notice & the main channel announcement render the card alone instead of the text version above it - a pinned message still carrying the text version is rewritten as a card on its next check
+
 ### v1.11.0
 
 - :rocket: Post the pinned message & the reopened notice of an incident channel as Block Kit cards - a priority coloured stripe, the Event details as a field grid, the remarks & an Open in CloudTAK button - keeping the full details as the fallback text the pinned message is recognised & compared by

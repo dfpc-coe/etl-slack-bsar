@@ -240,8 +240,9 @@ export default class Incidents {
      * Write the current state of the Event to the pinned message of the
      * channel, recognised by its link back to the Event - posted & pinned if
      * the channel has none. Only a newly posted message can mention @here.
-     * The fallback text carries the full details so a change is detected
-     * by comparing it with the pinned message
+     * The card fallback carries the full details so a change is detected by
+     * comparing it with the pinned message - one still carrying the details
+     * as rendered text is rewritten as a card
      */
     async status(channel: string, event: IncidentEvent, opts: { mention?: boolean } = {}): Promise<void> {
         const url = this.eventUrl(event);
@@ -263,10 +264,13 @@ export default class Incidents {
             if (!opts.mention) return;
         }
 
-        const current = pinned.find((message) => message.text?.includes(`/event/${event.id}`));
+        const current = pinned.find((message) => {
+            return [message.text, ...(message.attachments || []).map((a) => a.fallback)]
+                .some((candidate) => candidate?.includes(`/event/${event.id}`));
+        });
 
         if (current) {
-            if (current.text?.replace(/^<!here> /, '') === text) return;
+            if (current.attachments?.[0]?.fallback?.replace(/^<!here> /, '') === text) return;
             if (await this.slack.update(channel, current.ts, text, this.card(event.name, event, { buttons })) === 'updated') return;
 
             await this.slack.unpin(channel, current.ts);
