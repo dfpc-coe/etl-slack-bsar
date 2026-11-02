@@ -2,9 +2,11 @@ import type { TSchema, Static } from '@sinclair/typebox';
 import { Type } from '@sinclair/typebox';
 import type Lambda from 'aws-lambda';
 import type { Event, OutgoingEventMessage, OutgoingBoardEventMessage } from '@tak-ps/etl';
-import ETL, { SchemaType, handler as internal, local, DataFlowType, OutgoingMessageType, OutgoingAction } from '@tak-ps/etl';
+import ETL, { SchemaType, handler as internal, local, DataFlowType, InvocationType, OutgoingMessageType, OutgoingAction } from '@tak-ps/etl';
+import type Schema from '@openaddresses/batch-schema';
 import Slack from './lib/slack.js';
 import Incidents from './lib/incident.js';
+import Interactions, { BlockActions, verify } from './lib/interaction.js';
 import CoreEvents, { Placement, IncidentEvent } from './lib/cloudtak.js';
 
 const BoardTrigger = Type.Object({
@@ -37,6 +39,9 @@ const OutgoingInput = Type.Object({
     'SLACK_TOKEN': Type.String({
         description: 'Slack User OAuth Token (xoxp-...) with channels:write, channels:read, groups:write, groups:read, chat:write, pins:read, pins:write, bookmarks:read & bookmarks:write user scopes (plus usergroups:read if SLACK_USERGROUP is set) - a Bot User OAuth Token (xoxb-...) with the equivalent bot scopes also works'
     }),
+    'SLACK_SIGNING_SECRET': Type.Optional(Type.String({
+        description: 'Signing Secret of the Slack App (Basic Information => App Credentials) - enables the Assign Me, Close Incident & Priority controls on the pinned card, acted on through the Webhook URL of the Layer set as the Interactivity Request URL of the App (requires the users:read scope)'
+    })),
     'SLACK_PRIVATE': Type.Boolean({
         default: false,
         description: 'Create private channels instead of public ones'
@@ -70,6 +75,11 @@ const OutgoingInput = Type.Object({
     })
 });
 
+// Slack Interactivity payloads arrive form encoded with the JSON in a payload field
+const InteractionBody = Type.Object({
+    payload: Type.String()
+});
+
 // Layers configured before TRIGGER store the Board ID at the top level
 const StoredInput = Type.Composite([
     Type.Omit(OutgoingInput, ['TRIGGER']),
@@ -98,8 +108,15 @@ type Context = {
 
 export default class Task extends ETL {
     static name = 'etl-slack-bsar'
-    static flow = [ DataFlowType.Outgoing ];
+    static flow = [ DataFlowType.Outgoing, DataFlowType.Incoming ];
+    static invocation = [ InvocationType.Webhook ];
+    static invocationDefaults = {
+        webhook: {
+            enabled: true
+        }
+    };
 
+    /** Everything is configured on the Outgoing side - the Incoming flow only exists to receive Slack interactions */
     async schema(
         type: SchemaType = SchemaType.Input,
         flow: DataFlowType = DataFlowType.Outgoing
@@ -110,6 +127,72 @@ export default class Task extends ETL {
             return Type.Object({});
         }
     }
+
+    /**
+     * Slack Interactivity Request URL - block_actions from the controls of a pinned card,
+     * verified against the Signing Secret over the raw body, then acted on as the Layer
+     */
+    static webhooks = async function(schema: Schema, base: ETL): Promise<void> {
+        const task = base as Task;
+
+        await schema.get('/:webhookid', {
+            name: 'Webhook Healthcheck',
+            group: 'Webhook',
+            params: Type.Object({ webhookid: Type.String() }),
+            res: Type.Object({
+                status: Type.Integer(),
+                message: Type.String()
+            })
+        }, (req, res) => {
+            res.json({ status: 200, message: `${Task.name} webhook endpoint - set as the Interactivity Request URL of the Slack App` });
+        });
+
+        await schema.post('/:webhookid', {
+            name: 'Slack Interaction',
+            group: 'Webhook',
+            description: 'Slack Interactivity payload - a form encoded body with a JSON `payload` field',
+            params: Type.Object({ webhookid: Type.String() }),
+            body: {
+                'application/x-www-form-urlencoded': InteractionBody
+            },
+            res: Type.Object({
+                status: Type.Integer(),
+                message: Type.String()
+            })
+        }, async (req, res) => {
+            try {
+                const env = await task.env(StoredInput, DataFlowType.Outgoing);
+
+                if (!env.SLACK_SIGNING_SECRET) {
+                    res.status(401).json({ status: 401, message: 'SLACK_SIGNING_SECRET is not configured' });
+                    return;
+                }
+
+                if (!req.rawBody || !verify(env.SLACK_SIGNING_SECRET, req.headers['x-slack-request-timestamp'], req.headers['x-slack-signature'], req.rawBody)) {
+                    res.status(401).json({ status: 401, message: 'Invalid Slack signature' });
+                    return;
+                }
+
+                const payload: unknown = JSON.parse(task.type(InteractionBody, req.body).payload);
+
+                if (typeof payload !== 'object' || payload === null || (payload as { type?: unknown }).type !== 'block_actions') {
+                    res.json({ status: 200, message: 'ignored' });
+                    return;
+                }
+
+                const slack = new Slack(env.SLACK_TOKEN);
+
+                await new Interactions(slack, new CoreEvents(task), (msg: string) => {
+                    if (env.DEBUG) console.log(`ok - debug - ${msg}`);
+                }).handle(task.type(BlockActions, payload));
+
+                res.json({ status: 200, message: 'ok' });
+            } catch (err) {
+                console.error('not ok - Slack interaction failed:', err);
+                res.status(500).json({ status: 500, message: err instanceof Error ? err.message : String(err) });
+            }
+        });
+    };
 
     async outgoing(event: Lambda.SQSEvent): Promise<boolean> {
         const env = await this.env(StoredInput, DataFlowType.Outgoing);
@@ -131,7 +214,8 @@ export default class Task extends ETL {
                 isPrivate: env.SLACK_PRIVATE,
                 invite: env.SLACK_INVITE.map((u) => u.user),
                 usergroup: env.SLACK_USERGROUP,
-                announce: env.SLACK_ANNOUNCE
+                announce: env.SLACK_ANNOUNCE,
+                interactive: !!env.SLACK_SIGNING_SECRET
             }),
             coreEvents: new CoreEvents(this),
             debug: (msg: string) => {
@@ -352,7 +436,9 @@ export default class Task extends ETL {
     }
 }
 
-await local(await Task.init(import.meta.url), import.meta.url);
-export async function handler(event: Event = {}) {
-    return await internal(new Task(import.meta.url), event);
+const options = { webhooks: { rawBody: true } };
+
+await local(await Task.init(import.meta.url, options), import.meta.url);
+export async function handler(event: Event = {}, context?: object) {
+    return await internal(new Task(import.meta.url, options), event, context);
 }

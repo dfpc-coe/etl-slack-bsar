@@ -6,9 +6,9 @@
     "description": "",
     "main": "task.ts",
     "scripts": {
-        "lint": "eslint task.ts lib/",
+        "lint": "eslint task.ts lib/ test/",
         "build": "tsc --build",
-        "test": "exit 0"
+        "test": "tsx --test test/*.ts"
     },
     "author": "Nicholas Ingalls <nicholas.ingalls@state.co.us>",
     "license": "ISC",
@@ -16,11 +16,13 @@
         "@eslint/js": "^10.0.0",
         "@types/aws-lambda": "^8.10.163",
         "eslint": "^10.0.0",
+        "tsx": "^4.23.12",
         "typescript": "^6.0.0",
         "typescript-eslint": "^8.0.0"
     },
     "dependencies": {
+        "@openaddresses/batch-schema": "^10.19.0",
         "@sinclair/typebox": "^0.34.0",
-        "@tak-ps/etl": "^10.20.0"
+        "@tak-ps/etl": "^10.26.0"
     }
 }

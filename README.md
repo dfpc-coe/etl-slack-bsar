@@ -4,7 +4,8 @@
 
 ## Flow
 
-This is an Outgoing only task. The `TRIGGER` environment picks what starts the Slack flow:
+This is an Outgoing task with an Incoming Webhook that receives Slack interactions. The `TRIGGER` environment picks
+what starts the Slack flow:
 
 - **Board Placement** - subscribe to `board:event:*`, `event:update` & `event:delete`. When a CoreEvent is placed on the configured Board,
   and its type is one of the configured SAR types, a channel is opened. Moving the Event on the Board revives an
@@ -28,6 +29,22 @@ retitled but never removed.
 
 Created channels are tracked in the Layer's ephemeral store by CoreEvent ID so an Event never gets a second channel.
 
+### Interactive Controls
+
+When `SLACK_SIGNING_SECRET` is set the pinned card carries controls acted on by the Layer through its Webhook URL, which
+is set as the Interactivity Request URL of the Slack App - see [Slack Installation](#slack-installation):
+
+- **Assign Me** - assigns the pressing Slack user to the CoreEvent by their Slack display name, unless already assigned
+- **Close Incident** / **Reopen Incident** - ends the CoreEvent now, after a confirmation, or clears its end. A closed
+  Event shows a Closed status and a grey stripe
+- **Priority** - a selector that sets the priority of the CoreEvent
+
+Every interaction is verified against the Signing Secret of the App over the raw request body, acted on with the
+permissions of the Layer, and reported back to the channel as a line naming the Slack user. The resulting `event:update`
+then rewrites the pinned card with the new state. The Webhook invocation is on by default and has no settings of its
+own - everything is configured on the Outgoing side. Without the secret the card carries no controls and the Webhook
+rejects every request.
+
 If `SLACK_ANNOUNCE` names a main channel, an incident card is posted there whenever a channel is opened or reopened - so a
 team watching one channel learns of every new incident. The card carries a stripe coloured by the Event priority, the
 Event details, the first 200 characters of the remarks, a button into the incident channel and a button to the CoreEvent
@@ -35,11 +52,13 @@ in CloudTAK - the pinned card in the incident channel carries the remarks in ful
 
 | Permission | Required | Description |
 | ---------- | -------- | ----------- |
-| `event:read`, `event:update` | No | Append the Slack channel URL to the links of the CoreEvent |
+| `event:read`, `event:update` | No | Append the Slack channel URL to the links of the CoreEvent, and close, reopen or reprioritise it from the pinned card |
+| `assignment:read`, `assignment:create` | No | Assign the Slack user pressing Assign Me to the CoreEvent |
 
 | Environment | Description |
 | ----------- | ----------- |
-| `SLACK_TOKEN` | Slack User OAuth Token (`xoxp-`) with `channels:write`, `channels:read`, `groups:write`, `groups:read`, `chat:write`, `pins:read`, `pins:write`, `bookmarks:read`, `bookmarks:write` & `usergroups:read` user scopes - see [Slack Installation](#slack-installation). Channels are created & messages posted as the User that installed the App. A Bot User OAuth Token (`xoxb-`) with the equivalent bot scopes (`channels:manage` in place of `channels:write`) also works |
+| `SLACK_TOKEN` | Slack User OAuth Token (`xoxp-`) with `channels:write`, `channels:read`, `groups:write`, `groups:read`, `chat:write`, `pins:read`, `pins:write`, `bookmarks:read`, `bookmarks:write`, `usergroups:read` & `users:read` user scopes - see [Slack Installation](#slack-installation). Channels are created & messages posted as the User that installed the App. A Bot User OAuth Token (`xoxb-`) with the equivalent bot scopes (`channels:manage` in place of `channels:write`) also works |
+| `SLACK_SIGNING_SECRET` | Optional Signing Secret of the Slack App (**Basic Information** => **App Credentials**) - enables the [Interactive Controls](#interactive-controls) of the pinned card |
 | `SLACK_PRIVATE` | Create private channels instead of public ones |
 | `SLACK_PREFIX` | Prefix of created channel names |
 | `SLACK_INVITE` | Slack User IDs invited to every created channel |
@@ -53,6 +72,9 @@ in CloudTAK - the pinned card in the incident channel carries the remarks in ful
 The ETL authenticates as the User that installs the App via a User OAuth Token. Channels are created & messages
 posted as that User, who is automatically a member of every channel they create - so the App has no Bot User.
 
+1. Create the CloudTAK Layer first and copy its **Webhook URL** from the Incoming configuration - Webhooks Delivery is
+   on by default - into the `request_url` of the manifest below. Leave the `interactivity` block out to skip the
+   [Interactive Controls](#interactive-controls)
 1. Navigate to [Slack App Management](https://app.slack.com/apps-manage/) and select the workspace you want to install
    the integration into
 2. Select **Build** in the top right corner
@@ -78,11 +100,16 @@ posted as that User, who is automatically a member of every channel they create 
                 "pins:write",
                 "bookmarks:read",
                 "bookmarks:write",
-                "usergroups:read"
+                "usergroups:read",
+                "users:read"
             ]
         }
     },
     "settings": {
+        "interactivity": {
+            "is_enabled": true,
+            "request_url": "https://webhooks.example.com/<layer uuid>"
+        },
         "org_deploy_enabled": false,
         "socket_mode_enabled": false,
         "token_rotation_enabled": false
@@ -93,6 +120,8 @@ posted as that User, who is automatically a member of every channel they create 
 5. Review the App summary and then select **Create & Install** - install it as the User the channels should be created by
 6. Click **Go To App Settings**, select **OAuth & Permissions** on the left, and copy the **User OAuth Token**
    (`xoxp-`) into the `SLACK_TOKEN` field of the CloudTAK Layer
+7. For the Interactive Controls, select **Basic Information** and copy the **Signing Secret** under **App Credentials**
+   into the `SLACK_SIGNING_SECRET` field of the Layer - cards pinned from then on carry the controls
 
 ## Development
 

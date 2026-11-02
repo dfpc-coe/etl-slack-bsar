@@ -1,12 +1,23 @@
 import type { Static } from '@sinclair/typebox';
 import type Slack from './slack.js';
-import type { SlackChannelInfo, SlackBlock, SlackCard } from './slack.js';
-import type { IncidentEvent, Link } from './cloudtak.js';
+import type { SlackChannelInfo, SlackBlock, SlackCard, SlackActionElement } from './slack.js';
+import type { IncidentEvent, Link, Priority } from './cloudtak.js';
+import { closed } from './cloudtak.js';
+import { Action } from './interaction.js';
 
 export type IncidentChannel = Static<typeof SlackChannelInfo> & { reopened: boolean };
 
 /** Characters of the remarks shown on the main channel card - the pinned card carries them in full */
 const ANNOUNCE_REMARKS = 200;
+
+/** Options of the priority selector on the pinned card */
+const PRIORITIES: Array<{ value: Priority, text: string }> = [
+    { value: 'none', text: 'No Priority' },
+    { value: 'low', text: 'Low' },
+    { value: 'medium', text: 'Medium' },
+    { value: 'high', text: 'High' },
+    { value: 'critical', text: 'Critical' }
+];
 
 /** Attachment stripe colour by CoreEvent priority */
 const PRIORITY_COLOR: Record<string, string> = {
@@ -42,6 +53,7 @@ export default class Incidents {
     invite: string[];
     usergroup?: string;
     announceChannel?: string;
+    interactive: boolean;
     members?: Promise<string[]>;
 
     constructor(slack: Slack, opts: {
@@ -50,7 +62,8 @@ export default class Incidents {
         isPrivate: boolean,
         invite: string[],
         usergroup?: string,
-        announce?: string
+        announce?: string,
+        interactive?: boolean
     }) {
         this.slack = slack;
         this.api = opts.api;
@@ -59,6 +72,7 @@ export default class Incidents {
         this.invite = opts.invite;
         this.usergroup = opts.usergroup?.trim() || undefined;
         this.announceChannel = opts.announce?.trim().replace(/^#/, '') || undefined;
+        this.interactive = opts.interactive || false;
     }
 
     /** Users to invite to a new channel - the User Group is resolved once per invocation, and only if a channel is opened */
@@ -153,6 +167,7 @@ export default class Incidents {
         const remarks = escape(event.remarks || '');
 
         return [
+            closed(event) ? 'Status: Closed' : '',
             event.priority ? `Priority: ${escape(event.priority)}` : '',
             event.location ? `Location: ${escape(event.location)}` : '',
             `Coordinates: ${lat.toFixed(5)}, ${lng.toFixed(5)}`,
@@ -165,20 +180,68 @@ export default class Incidents {
     }
 
     /**
+     * Controls of the pinned card, acted on by the Interactivity webhook - assign the pressing
+     * user, close or reopen the Event, and pick its priority
+     */
+    controls(event: IncidentEvent): SlackActionElement[] {
+        if (!this.interactive) return [];
+
+        const current = PRIORITIES.find((p) => p.value === (event.priority || 'none'));
+
+        const option = (p: { value: Priority, text: string }) => ({
+            text: { type: 'plain_text' as const, text: p.text },
+            value: `${event.id}:${p.value}`
+        });
+
+        return [{
+            type: 'button',
+            text: { type: 'plain_text', text: 'Assign Me' },
+            action_id: Action.Assign,
+            value: event.id
+        }, closed(event) ? {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Reopen Incident' },
+            action_id: Action.Reopen,
+            value: event.id
+        } : {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Close Incident' },
+            action_id: Action.Close,
+            value: event.id,
+            style: 'danger',
+            confirm: {
+                title: { type: 'plain_text', text: 'Close this incident?' },
+                text: { type: 'mrkdwn', text: `*${escape(event.name)}* will be ended in CloudTAK` },
+                confirm: { type: 'plain_text', text: 'Close' },
+                deny: { type: 'plain_text', text: 'Cancel' },
+                style: 'danger'
+            }
+        }, {
+            type: 'static_select',
+            action_id: Action.Priority,
+            placeholder: { type: 'plain_text', text: 'Priority' },
+            options: PRIORITIES.map(option),
+            ...(current ? { initial_option: option(current) } : {})
+        }];
+    }
+
+    /**
      * Block Kit card of an Event - a heading, the details as a field grid, the remarks
-     * (cut to `remarks` characters), then the given buttons & context line - striped by priority
+     * (cut to `remarks` characters), then the given buttons, controls & context line - striped by priority
      */
     card(heading: string, event: IncidentEvent, opts: {
         mention?: boolean,
         reopened?: boolean,
         remarks?: number,
         buttons?: Array<{ text: string, url: string, primary?: boolean }>,
+        controls?: SlackActionElement[],
         context?: string[]
     } = {}): SlackCard {
         const [lng, lat] = event.geometry.coordinates;
         const created = Math.floor(Date.parse(event.created) / 1000);
 
         const fields = [
+            closed(event) ? '*Status*\nClosed' : '',
             event.priority && event.priority !== 'none' ? `*Priority*\n${escape(event.priority)}` : '',
             event.location ? `*Location*\n${escape(event.location)}` : '',
             `*Coordinates*\n${lat.toFixed(5)}, ${lng.toFixed(5)}`
@@ -207,16 +270,18 @@ export default class Incidents {
             });
         }
 
-        if (opts.buttons?.length) {
-            blocks.push({
-                type: 'actions',
-                elements: opts.buttons.map((button) => ({
-                    type: 'button',
-                    text: { type: 'plain_text', text: button.text.slice(0, 75) },
-                    url: button.url,
-                    ...(button.primary ? { style: 'primary' } : {})
-                }))
-            });
+        const elements: SlackActionElement[] = [
+            ...(opts.buttons || []).map((button): SlackActionElement => ({
+                type: 'button',
+                text: { type: 'plain_text', text: button.text.slice(0, 75) },
+                url: button.url,
+                ...(button.primary ? { style: 'primary' } : {})
+            })),
+            ...(opts.controls || [])
+        ];
+
+        if (elements.length) {
+            blocks.push({ type: 'actions', elements });
         }
 
         blocks.push({
@@ -231,7 +296,7 @@ export default class Incidents {
         });
 
         return {
-            color: PRIORITY_COLOR[event.priority || ''] || '#6b7280',
+            color: closed(event) ? '#6b7280' : PRIORITY_COLOR[event.priority || ''] || '#6b7280',
             blocks
         };
     }
@@ -254,6 +319,7 @@ export default class Incidents {
         ].join('\n');
 
         const buttons = [{ text: 'Open in CloudTAK', url, primary: true }];
+        const controls = this.controls(event);
 
         let pinned: Awaited<ReturnType<Slack['pins']>> = [];
 
@@ -271,7 +337,7 @@ export default class Incidents {
 
         if (current) {
             if (current.attachments?.[0]?.fallback?.replace(/^<!here> /, '') === text) return;
-            if (await this.slack.update(channel, current.ts, text, this.card(event.name, event, { buttons })) === 'updated') return;
+            if (await this.slack.update(channel, current.ts, text, this.card(event.name, event, { buttons, controls })) === 'updated') return;
 
             await this.slack.unpin(channel, current.ts);
         }
@@ -279,7 +345,7 @@ export default class Incidents {
         const ts = await this.slack.post(
             channel,
             opts.mention ? `<!here> ${text}` : text,
-            this.card(event.name, event, { mention: opts.mention, buttons })
+            this.card(event.name, event, { mention: opts.mention, buttons, controls })
         );
 
         if (ts) await this.slack.pin(channel, ts);

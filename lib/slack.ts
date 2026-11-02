@@ -78,6 +78,19 @@ const SlackUserGroupList = Type.Object({
     })))
 });
 
+const SlackUserInfo = Type.Object({
+    ok: Type.Boolean(),
+    error: Type.Optional(Type.String()),
+    user: Type.Optional(Type.Object({
+        name: Type.String({ description: 'Username - ie: jdoe' }),
+        real_name: Type.Optional(Type.String()),
+        profile: Type.Optional(Type.Object({
+            display_name: Type.Optional(Type.String()),
+            real_name: Type.Optional(Type.String())
+        }))
+    }))
+});
+
 const SlackAuth = Type.Object({
     ok: Type.Boolean(),
     error: Type.Optional(Type.String()),
@@ -87,10 +100,24 @@ const SlackAuth = Type.Object({
 
 export type SlackText = { type: 'plain_text', text: string, emoji?: boolean } | { type: 'mrkdwn', text: string };
 
+export type SlackConfirm = { title: SlackText, text: SlackText, confirm: SlackText, deny: SlackText, style?: 'primary' | 'danger' };
+
+/** Interactive elements of an actions block - a link button opens its URL, the others post to the Interactivity Request URL */
+export type SlackActionElement =
+    { type: 'button', text: SlackText, url: string, style?: 'primary' | 'danger' }
+    | { type: 'button', text: SlackText, action_id: string, value: string, style?: 'primary' | 'danger', confirm?: SlackConfirm }
+    | {
+        type: 'static_select',
+        action_id: string,
+        placeholder: SlackText,
+        options: Array<{ text: SlackText, value: string }>,
+        initial_option?: { text: SlackText, value: string }
+    };
+
 export type SlackBlock =
     { type: 'header', text: SlackText }
     | { type: 'section', text?: SlackText, fields?: SlackText[] }
-    | { type: 'actions', elements: Array<{ type: 'button', text: SlackText, url: string, style?: 'primary' | 'danger' }> }
+    | { type: 'actions', elements: SlackActionElement[] }
     | { type: 'context', elements: SlackText[] };
 
 export type SlackCard = { color: string, blocks: SlackBlock[] };
@@ -322,6 +349,33 @@ export default class Slack {
     async unpin(channel: string, ts: string): Promise<void> {
         const res = await this.call('pins.remove', SlackResponse, { channel, timestamp: ts });
         if (!res.ok && res.error !== 'no_pin') console.error(`not ok - Slack pins.remove: ${res.error}`);
+    }
+
+    /** Display name of a User, falling back to their username - requires the users:read scope */
+    async userName(user: string): Promise<string> {
+        const res = await this.call('users.info', SlackUserInfo, { user });
+        if (!res.ok || !res.user) throw new Error(`Slack users.info: ${res.error}`);
+
+        return res.user.profile?.display_name || res.user.real_name || res.user.profile?.real_name || res.user.name;
+    }
+
+    /**
+     * Reply to an interaction through its response_url - visible to the whole channel
+     * when `inChannel`, otherwise only to the user who interacted. Valid for 30 minutes
+     * after the interaction
+     */
+    async respond(responseUrl: string, text: string, opts: { inChannel?: boolean } = {}): Promise<void> {
+        const res = await fetch(responseUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                response_type: opts.inChannel ? 'in_channel' : 'ephemeral',
+                replace_original: false,
+                text
+            })
+        });
+
+        if (!res.ok) console.error(`not ok - Slack response_url: ${res.status} ${await res.text()}`);
     }
 
     /** Permalink of a channel in the workspace the token belongs to */

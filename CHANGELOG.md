@@ -12,6 +12,11 @@
 
 ### Pending Release
 
+### v1.12.0
+
+- :tada: Add Assign Me, Close/Reopen Incident & Priority controls to the pinned card, acted on by a Slack Interactivity webhook - the task gains an Incoming Webhook invocation, on by default, whose URL is set as the Interactivity Request URL of the Slack App; interactions are verified against the new optional `SLACK_SIGNING_SECRET` over the raw request body (`@tak-ps/etl` 10.26.0 `webhooks.rawBody`) and acted on as the Layer, with the outcome reported back to the channel. Without the secret the card carries no controls
+- :rocket: Show a Closed status on the card of an ended CoreEvent, greying its stripe
+
 ### v1.11.1
 
 - :bug: Send the text of a Block Kit card message as the attachment fallback rather than the message body, so the pinned message, the reopened notice & the main channel announcement render the card alone instead of the text version above it - a pinned message still carrying the text version is rewritten as a card on its next check

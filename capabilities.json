@@ -1,7 +1,7 @@
 {
     "version": "1.0",
     "name": "Slack BSAR",
-    "description": "Creates a Slack channel for every SAR CoreEvent placed on a CoreEvent Board or created in a TAK Server Channel.",
+    "description": "Creates a Slack channel for every SAR CoreEvent placed on a CoreEvent Board or created in a TAK Server Channel, with a pinned card whose controls assign, close & prioritise the Event from Slack.",
     "compute": {
         "memory": 256,
         "timeout": 60
@@ -15,10 +15,28 @@
         {
             "resource": "event:update",
             "required": false,
-            "description": "Adds the URL of the created Slack channel to the links of the CoreEvent"
+            "description": "Adds the URL of the created Slack channel to the links of the CoreEvent, and closes, reopens or reprioritises the CoreEvent from the controls of the pinned card"
+        },
+        {
+            "resource": "assignment:read",
+            "required": false,
+            "description": "Checks whether the Slack user pressing Assign Me is already assigned to the CoreEvent"
+        },
+        {
+            "resource": "assignment:create",
+            "required": false,
+            "description": "Assigns the Slack user pressing Assign Me to the CoreEvent"
         }
     ],
     "invocations": {
+        "incoming": {
+            "webhook": {
+                "description": "Slack Interactivity Request URL - receives the Assign Me, Close/Reopen Incident & Priority controls of the pinned card, verified against SLACK_SIGNING_SECRET",
+                "default": {
+                    "enabled": true
+                }
+            }
+        },
         "outgoing": {
             "types": [
                 {
