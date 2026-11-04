@@ -1,11 +1,14 @@
 import type { Static } from '@sinclair/typebox';
 import type Slack from './slack.js';
-import type { SlackChannelInfo, SlackBlock, SlackCard, SlackActionElement } from './slack.js';
+import type { SlackChannelInfo, SlackBlock, SlackCard, SlackActionElement, SlackPostedMessage } from './slack.js';
 import type { IncidentEvent, Link, Priority } from './cloudtak.js';
 import { closed } from './cloudtak.js';
 import { Action } from './interaction.js';
 
 export type IncidentChannel = Static<typeof SlackChannelInfo> & { reopened: boolean };
+
+/** The card of an incident in the main channel - where it was posted & whether it announced a reopening */
+export type Announcement = SlackPostedMessage & { reopened: boolean };
 
 /** Characters of the remarks shown on the main channel card - the pinned card carries them in full */
 const ANNOUNCE_REMARKS = 200;
@@ -342,13 +345,13 @@ export default class Incidents {
             await this.slack.unpin(channel, current.ts);
         }
 
-        const ts = await this.slack.post(
+        const posted = await this.slack.post(
             channel,
             opts.mention ? `<!here> ${text}` : text,
             this.card(event.name, event, { mention: opts.mention, buttons, controls })
         );
 
-        if (ts) await this.slack.pin(channel, ts);
+        if (posted) await this.slack.pin(channel, posted.ts);
     }
 
     /**
@@ -371,19 +374,13 @@ export default class Incidents {
         await this.status(channel, event, { mention: !opts.reopened });
     }
 
-    /**
-     * Post an incident card to the main channel, if one is configured,
-     * with a button into the incident channel
-     */
-    async broadcast(channel: { id: string, name: string }, event: IncidentEvent, opts: { reopened?: boolean } = {}): Promise<void> {
-        if (!this.announceChannel) return;
+    /** The main channel card of an incident - headed Closed once the Event has ended */
+    async announcement(channel: { id: string, name: string }, event: IncidentEvent, reopened: boolean): Promise<{ text: string, card: SlackCard }> {
+        const heading = `${closed(event) ? 'Closed' : reopened ? 'Reopened' : 'New'} Incident: ${event.name}`;
 
-        const heading = `${opts.reopened ? 'Reopened' : 'New'} Incident: ${event.name}`;
-
-        await this.slack.post(
-            this.announceChannel,
-            `${escape(heading)} - #${channel.name}`,
-            this.card(heading, event, {
+        return {
+            text: `${escape(heading)} - #${channel.name}`,
+            card: this.card(heading, event, {
                 remarks: ANNOUNCE_REMARKS,
                 buttons: [
                     { text: `#${channel.name}`, url: await this.slack.channelUrl(channel.id), primary: true },
@@ -391,6 +388,30 @@ export default class Incidents {
                 ],
                 context: [`<#${channel.id}>`]
             })
-        );
+        };
+    }
+
+    /**
+     * Post an incident card to the main channel, if one is configured, with a button
+     * into the incident channel - returns where it landed so it can be kept current
+     */
+    async broadcast(channel: { id: string, name: string }, event: IncidentEvent, opts: { reopened?: boolean } = {}): Promise<Announcement | null> {
+        if (!this.announceChannel) return null;
+
+        const reopened = opts.reopened || false;
+        const { text, card } = await this.announcement(channel, event, reopened);
+        const posted = await this.slack.post(this.announceChannel, text, card);
+
+        return posted ? { ...posted, reopened } : null;
+    }
+
+    /**
+     * Rewrite the main channel card of an incident with the current state of the Event, so a
+     * closed Event reads as Closed there too - false if the message can no longer be edited
+     */
+    async rebroadcast(posted: Announcement, channel: { id: string, name: string }, event: IncidentEvent): Promise<boolean> {
+        const { text, card } = await this.announcement(channel, event, posted.reopened);
+
+        return await this.slack.update(posted.channel, posted.ts, text, card) === 'updated';
     }
 }

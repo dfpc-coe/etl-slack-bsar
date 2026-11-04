@@ -48,7 +48,9 @@ rejects every request.
 If `SLACK_ANNOUNCE` names a main channel, an incident card is posted there whenever a channel is opened or reopened - so a
 team watching one channel learns of every new incident. The card carries a stripe coloured by the Event priority, the
 Event details, the first 200 characters of the remarks, a button into the incident channel and a button to the CoreEvent
-in CloudTAK - the pinned card in the incident channel carries the remarks in full.
+in CloudTAK - the pinned card in the incident channel carries the remarks in full. The card is kept current with the
+Event alongside the pinned card, so once the CoreEvent is ended it is headed **Closed Incident** with a Closed status and
+a grey stripe, and a reopened incident posts a fresh card that is tracked from then on.
 
 | Permission | Required | Description |
 | ---------- | -------- | ----------- |
@@ -63,7 +65,7 @@ in CloudTAK - the pinned card in the incident channel carries the remarks in ful
 | `SLACK_PREFIX` | Prefix of created channel names |
 | `SLACK_INVITE` | Slack User IDs invited to every created channel |
 | `SLACK_USERGROUP` | Optional Slack User Group, by `@handle` or name, whose members are invited to every created channel - User Groups are a paid Slack feature |
-| `SLACK_ANNOUNCE` | Optional main channel, by ID or `#name`, where an incident card linking to the incident channel is posted whenever one is opened or reopened - the token User must be a member of it |
+| `SLACK_ANNOUNCE` | Optional main channel, by ID or `#name`, where an incident card linking to the incident channel is posted whenever one is opened or reopened and rewritten as the Event changes or closes - the token User must be a member of it |
 | `TRIGGER` | **Board Placement** with the ID of the CoreEvent Board to watch, or **Channel Event** with the TAK Server Channel ID to watch |
 | `SAR_TYPES` | MIL-STD-2525E Symbol IDs considered SAR - every Event is accepted if empty |
 

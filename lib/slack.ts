@@ -48,8 +48,12 @@ const SlackBookmarkList = Type.Object({
 const SlackPosted = Type.Object({
     ok: Type.Boolean(),
     error: Type.Optional(Type.String()),
+    channel: Type.Optional(Type.String({ description: 'ID of the channel the message landed in, even when posted by name' })),
     ts: Type.Optional(Type.String({ description: 'Timestamp of the message - the ID it is updated & pinned by' }))
 });
+
+/** Where a posted message lives - by channel ID & timestamp */
+export type SlackPostedMessage = { channel: string, ts: string };
 
 export const SlackMessage = Type.Object({
     ts: Type.String(),
@@ -296,9 +300,9 @@ export default class Slack {
     /**
      * Post a message - with a Block Kit card as a colour striped attachment when given,
      * `text` then being its fallback for notifications & search rather than a rendered body.
-     * Returns its timestamp, null if it could not be posted
+     * Returns where it landed, null if it could not be posted
      */
-    async post(channel: string, text: string, card?: SlackCard): Promise<string | null> {
+    async post(channel: string, text: string, card?: SlackCard): Promise<SlackPostedMessage | null> {
         const res = await this.call('chat.postMessage', SlackPosted, {
             channel,
             unfurl_links: false,
@@ -310,7 +314,7 @@ export default class Slack {
             return null;
         }
 
-        return res.ts;
+        return { channel: res.channel || channel, ts: res.ts };
     }
 
     /**

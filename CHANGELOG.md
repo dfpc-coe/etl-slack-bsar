@@ -12,6 +12,10 @@
 
 ### Pending Release
 
+### v1.13.0
+
+- :rocket: Keep the `SLACK_ANNOUNCE` main channel card of an incident current with its CoreEvent - every `event:update` rewrites it alongside the pinned card, so an ended Event is headed Closed Incident with a Closed status & a grey stripe there too. Where each card was posted is kept in the ephemeral store, so cards posted before this release are left as they were
+
 ### v1.12.0
 
 - :tada: Add Assign Me, Close/Reopen Incident & Priority controls to the pinned card, acted on by a Slack Interactivity webhook - the task gains an Incoming Webhook invocation, on by default, whose URL is set as the Interactivity Request URL of the Slack App; interactions are verified against the new optional `SLACK_SIGNING_SECRET` over the raw request body (`@tak-ps/etl` 10.26.0 `webhooks.rawBody`) and acted on as the Layer, with the outcome reported back to the channel. Without the secret the card carries no controls

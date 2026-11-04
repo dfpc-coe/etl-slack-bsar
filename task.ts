@@ -6,6 +6,7 @@ import ETL, { SchemaType, handler as internal, local, DataFlowType, InvocationTy
 import type Schema from '@openaddresses/batch-schema';
 import Slack from './lib/slack.js';
 import Incidents from './lib/incident.js';
+import type { Announcement } from './lib/incident.js';
 import Interactions, { BlockActions, verify } from './lib/interaction.js';
 import CoreEvents, { Placement, IncidentEvent } from './lib/cloudtak.js';
 
@@ -89,15 +90,22 @@ const StoredInput = Type.Composite([
     })
 ]);
 
-// CoreEvent ID => Slack Channel ID, so SQS redelivery or re-placing an Event doesn't create a second channel
+// CoreEvent ID => Slack Channel ID, so SQS redelivery or re-placing an Event doesn't create a second channel,
+// and CoreEvent ID => its latest main channel card, so an update of the Event is written through to it
 const EphemeralStore = Type.Object({
-    channels: Type.Optional(Type.Record(Type.String(), Type.String()))
+    channels: Type.Optional(Type.Record(Type.String(), Type.String())),
+    announcements: Type.Optional(Type.Record(Type.String(), Type.Object({
+        channel: Type.String(),
+        ts: Type.String(),
+        reopened: Type.Boolean()
+    })))
 });
 
 type Context = {
     trigger: Trigger;
     types: Set<string>;
     channels: Record<string, string>;
+    announcements: Record<string, Announcement>;
     slack: Slack;
     incidents: Incidents;
     coreEvents: CoreEvents;
@@ -207,6 +215,7 @@ export default class Task extends ETL {
             trigger,
             types: new Set(env.SAR_TYPES.map((t) => t.type)),
             channels: ephem.channels || {},
+            announcements: ephem.announcements || {},
             slack,
             incidents: new Incidents(slack, {
                 api: this.etl.api,
@@ -238,7 +247,7 @@ export default class Task extends ETL {
             }
         }
 
-        if (ctx.changed) await this.setEphemeral({ channels: ctx.channels }, DataFlowType.Outgoing);
+        if (ctx.changed) await this.setEphemeral({ channels: ctx.channels, announcements: ctx.announcements }, DataFlowType.Outgoing);
 
         ctx.debug(`created ${ctx.created} channel(s)`);
 
@@ -267,6 +276,7 @@ export default class Task extends ETL {
             ctx.debug(`event ${incident.id} deleted, channel ${known}: ${state}`);
 
             delete ctx.channels[incident.id];
+            delete ctx.announcements[incident.id];
             ctx.changed = true;
             return;
         }
@@ -278,6 +288,7 @@ export default class Task extends ETL {
                 ctx.debug(`event ${incident.id} updated, rewriting the pinned message & bookmarking ${(incident.links || []).length} link(s) in ${known}`);
                 await ctx.incidents.status(known, incident);
                 await ctx.incidents.bookmark(known, incident.links);
+                await this.reannounce(ctx, incident, info);
                 return;
             }
 
@@ -389,7 +400,7 @@ export default class Task extends ETL {
                 if (active.state === 'unarchived') {
                     await ctx.incidents.announce(known, incident, { reopened: true });
                     await ctx.incidents.bookmark(known, incident.links);
-                    await ctx.incidents.broadcast(active.channel, incident, { reopened: true });
+                    this.announced(ctx, incident, await ctx.incidents.broadcast(active.channel, incident, { reopened: true }));
                 }
 
                 await this.link(ctx, incident.id, active.channel);
@@ -415,8 +426,38 @@ export default class Task extends ETL {
 
         await ctx.incidents.announce(channel.id, incident, { reopened: channel.reopened });
         await ctx.incidents.bookmark(channel.id, incident.links);
-        await ctx.incidents.broadcast(channel, incident, { reopened: channel.reopened });
+        this.announced(ctx, incident, await ctx.incidents.broadcast(channel, incident, { reopened: channel.reopened }));
         await this.link(ctx, incident.id, channel);
+    }
+
+    /** Remember the main channel card of an incident so later updates of the Event reach it */
+    announced(ctx: Context, incident: IncidentEvent, posted: Announcement | null): void {
+        if (!posted) return;
+
+        ctx.announcements[incident.id] = posted;
+        ctx.changed = true;
+        ctx.debug(`event ${incident.id} announced in ${posted.channel} at ${posted.ts}`);
+    }
+
+    /** Write the current state of the Event to its main channel card, forgetting a card Slack no longer lets us edit */
+    async reannounce(ctx: Context, incident: IncidentEvent, channel: { id: string, name: string }): Promise<void> {
+        const posted = ctx.announcements[incident.id];
+        if (!posted) return;
+
+        try {
+            if (await ctx.incidents.rebroadcast(posted, channel, incident)) {
+                ctx.debug(`event ${incident.id} rewrote its announcement in ${posted.channel}`);
+                return;
+            }
+
+            ctx.debug(`event ${incident.id} announcement in ${posted.channel} is no longer editable, forgetting it`);
+        } catch (err) {
+            console.error(`not ok - failed to rewrite the announcement of CoreEvent ${incident.id}:`, err);
+            return;
+        }
+
+        delete ctx.announcements[incident.id];
+        ctx.changed = true;
     }
 
     /** Linking is best effort - a CoreEvent the Layer cannot read or update must not block channel handling */
