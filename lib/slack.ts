@@ -144,14 +144,12 @@ export default class Slack {
 
     /** Workspace URL & User ID of the token, looked up once per invocation */
     async self(): Promise<{ url: string, user: string }> {
-        if (!this.identity) {
-            this.identity = this.call('auth.test', SlackAuth).then((auth) => {
-                if (!auth.ok || !auth.url || !auth.user_id) throw new Error(`Slack auth.test: ${auth.error}`);
-                return { url: auth.url, user: auth.user_id };
-            });
-        }
+        this.identity ??= this.call('auth.test', SlackAuth).then((auth) => {
+            if (!auth.ok || !auth.url || !auth.user_id) throw new Error(`Slack auth.test: ${auth.error}`);
+            return { url: auth.url, user: auth.user_id };
+        });
 
-        return await this.identity;
+        return this.identity;
     }
 
     /** Form encoded, as Slack read methods (conversations.info/list) reject JSON bodies with invalid_arguments */
@@ -172,7 +170,7 @@ export default class Slack {
             body: form.toString()
         });
 
-        return await res.typed(schema);
+        return res.typed(schema);
     }
 
     /** Create a channel - returns null if the name is already taken */
@@ -199,7 +197,7 @@ export default class Slack {
 
             if (!res.ok) throw new Error(`Slack conversations.list: ${res.error}`);
 
-            const match = (res.channels || []).find((c) => c.name === name);
+            const match = (res.channels ?? []).find((c) => c.name === name);
             if (match) return match;
 
             cursor = res.response_metadata?.next_cursor || undefined;
@@ -245,7 +243,7 @@ export default class Slack {
     async invite(channel: string, users: string[]): Promise<void> {
         const self = await this.self();
         const others = [...new Set(users)].filter((user) => user !== self.user);
-        if (!others.length) return;
+        if (others.length === 0) return;
 
         // force => keep inviting the valid IDs when one is deactivated or already a member
         const res = await this.call('conversations.invite', SlackResponse, { channel, users: others.join(','), force: true });
@@ -259,13 +257,13 @@ export default class Slack {
         const res = await this.call('usergroups.list', SlackUserGroupList, { include_users: true, include_disabled: false });
         if (!res.ok) throw new Error(`Slack usergroups.list: ${res.error}`);
 
-        const group = (res.usergroups || []).find((g) => {
+        const group = (res.usergroups ?? []).find((g) => {
             return g.handle.toLowerCase() === wanted || g.name.trim().toLowerCase() === wanted;
         });
 
         if (!group) throw new Error(`Slack User Group "${name}" not found`);
 
-        return group.users || [];
+        return group.users ?? [];
     }
 
     /** Bookmarks of a channel - requires the bookmarks:read scope */
@@ -273,7 +271,7 @@ export default class Slack {
         const res = await this.call('bookmarks.list', SlackBookmarkList, { channel_id: channel });
         if (!res.ok) throw new Error(`Slack bookmarks.list: ${res.error}`);
 
-        return res.bookmarks || [];
+        return res.bookmarks ?? [];
     }
 
     /** Add a link bookmark to a channel - requires the bookmarks:write scope */
@@ -341,7 +339,7 @@ export default class Slack {
         const res = await this.call('pins.list', SlackPinList, { channel });
         if (!res.ok) throw new Error(`Slack pins.list: ${res.error}`);
 
-        return (res.items || []).flatMap((item) => item.message ? [item.message] : []);
+        return (res.items ?? []).flatMap((item) => item.message ? [item.message] : []);
     }
 
     /** Pin a message to a channel - requires the pins:write scope */

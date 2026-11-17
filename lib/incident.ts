@@ -1,6 +1,6 @@
 import type { Static } from '@sinclair/typebox';
 import type Slack from './slack.js';
-import type { SlackChannelInfo, SlackBlock, SlackCard, SlackActionElement, SlackPostedMessage } from './slack.js';
+import type { SlackChannelInfo, SlackBookmark, SlackBlock, SlackCard, SlackActionElement, SlackPostedMessage } from './slack.js';
 import type { IncidentEvent, Link, Priority } from './cloudtak.js';
 import { closed } from './cloudtak.js';
 import { Action } from './interaction.js';
@@ -32,7 +32,7 @@ const PRIORITY_COLOR: Record<string, string> = {
 
 /** Slack reads &, < and > of a message as control characters */
 function escape(text: string): string {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 /** Cut text to at most `limit` characters at a word boundary, marking the cut with an ellipsis */
@@ -43,6 +43,18 @@ function truncate(text: string, limit: number): string {
     const space = cut.lastIndexOf(' ');
 
     return (space > limit / 2 ? cut.slice(0, space) : cut).trimEnd() + '…';
+}
+
+function linkButton(button: { text: string, url: string, primary?: boolean }): SlackActionElement {
+    const element: SlackActionElement = {
+        type: 'button',
+        text: { type: 'plain_text', text: button.text.slice(0, 75) },
+        url: button.url
+    };
+
+    if (button.primary) element.style = 'primary';
+
+    return element;
 }
 
 /**
@@ -75,19 +87,17 @@ export default class Incidents {
         this.invite = opts.invite;
         this.usergroup = opts.usergroup?.trim() || undefined;
         this.announceChannel = opts.announce?.trim().replace(/^#/, '') || undefined;
-        this.interactive = opts.interactive || false;
+        this.interactive = opts.interactive ?? false;
     }
 
     /** Users to invite to a new channel - the User Group is resolved once per invocation, and only if a channel is opened */
     async invitees(): Promise<string[]> {
         if (!this.usergroup) return this.invite;
 
-        if (!this.members) {
-            this.members = this.slack.usergroupMembers(this.usergroup).catch((err) => {
-                console.error(`not ok - failed to resolve Slack User Group "${this.usergroup}":`, err);
-                return [];
-            });
-        }
+        this.members ??= this.slack.usergroupMembers(this.usergroup).catch((err) => {
+            console.error(`not ok - failed to resolve Slack User Group "${this.usergroup}":`, err);
+            return [];
+        });
 
         return [...this.invite, ...await this.members];
     }
@@ -96,8 +106,8 @@ export default class Incidents {
     channelName(event: IncidentEvent, suffix = ''): string {
         const slug = event.name
             .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-+|-+$/g, '');
+            .replaceAll(/[^a-z0-9]+/g, '-')
+            .replaceAll(/^-+|-+$/g, '');
 
         return [this.prefix, event.created.slice(0, 10), slug]
             .filter(Boolean)
@@ -147,12 +157,13 @@ export default class Incidents {
      */
     async bookmark(channel: string, links: Link[] = []): Promise<void> {
         const self = await this.slack.channelUrl(channel);
-        const wanted = links.filter((link) => link.url && link.url !== self);
-        if (!wanted.length) return;
+        const wanted = links.filter((link) => link.url !== '' && link.url !== self);
+        if (wanted.length === 0) return;
 
-        const existing = new Map((await this.slack.bookmarks(channel))
-            .filter((b) => b.link)
-            .map((b) => [b.link as string, b]));
+        const existing = new Map<string, Static<typeof SlackBookmark>>();
+        for (const bookmark of await this.slack.bookmarks(channel)) {
+            if (bookmark.link) existing.set(bookmark.link, bookmark);
+        }
 
         for (const link of wanted) {
             const current = existing.get(link.url);
@@ -223,7 +234,7 @@ export default class Incidents {
             type: 'static_select',
             action_id: Action.Priority,
             placeholder: { type: 'plain_text', text: 'Priority' },
-            options: PRIORITIES.map(option),
+            options: PRIORITIES.map((p) => option(p)),
             ...(current ? { initial_option: option(current) } : {})
         }];
     }
@@ -264,7 +275,7 @@ export default class Incidents {
             fields: fields.map((text) => ({ type: 'mrkdwn', text }))
         });
 
-        const remarks = escape(truncate(event.remarks || '', opts.remarks || 3000));
+        const remarks = escape(truncate(event.remarks || '', opts.remarks ?? 3000));
 
         if (remarks || opts.reopened) {
             blocks.push({
@@ -274,16 +285,11 @@ export default class Incidents {
         }
 
         const elements: SlackActionElement[] = [
-            ...(opts.buttons || []).map((button): SlackActionElement => ({
-                type: 'button',
-                text: { type: 'plain_text', text: button.text.slice(0, 75) },
-                url: button.url,
-                ...(button.primary ? { style: 'primary' } : {})
-            })),
-            ...(opts.controls || [])
+            ...(opts.buttons ?? []).map((button) => linkButton(button)),
+            ...(opts.controls ?? [])
         ];
 
-        if (elements.length) {
+        if (elements.length > 0) {
             blocks.push({ type: 'actions', elements });
         }
 
@@ -292,7 +298,7 @@ export default class Incidents {
             elements: [{
                 type: 'mrkdwn',
                 text: [
-                    ...(opts.context || []),
+                    ...(opts.context ?? []),
                     `Created <!date^${created}^{date_short_pretty} at {time}|${event.created}>`
                 ].join(' · ')
             }]
@@ -334,7 +340,7 @@ export default class Incidents {
         }
 
         const current = pinned.find((message) => {
-            return [message.text, ...(message.attachments || []).map((a) => a.fallback)]
+            return [message.text, ...(message.attachments ?? []).map((a) => a.fallback)]
                 .some((candidate) => candidate?.includes(`/event/${event.id}`));
         });
 
@@ -398,7 +404,7 @@ export default class Incidents {
     async broadcast(channel: { id: string, name: string }, event: IncidentEvent, opts: { reopened?: boolean } = {}): Promise<Announcement | null> {
         if (!this.announceChannel) return null;
 
-        const reopened = opts.reopened || false;
+        const reopened = opts.reopened ?? false;
         const { text, card } = await this.announcement(channel, event, reopened);
         const posted = await this.slack.post(this.announceChannel, text, card);
 

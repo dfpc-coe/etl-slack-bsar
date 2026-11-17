@@ -7,8 +7,9 @@ import type Schema from '@openaddresses/batch-schema';
 import Slack from './lib/slack.js';
 import Incidents from './lib/incident.js';
 import type { Announcement } from './lib/incident.js';
-import Interactions, { BlockActions, verify } from './lib/interaction.js';
-import CoreEvents, { Placement, IncidentEvent } from './lib/cloudtak.js';
+import Interactions, { BlockActionsSchema, verify } from './lib/interaction.js';
+import type { IncidentEvent } from './lib/cloudtak.js';
+import CoreEvents, { Placement, IncidentEventSchema } from './lib/cloudtak.js';
 
 const BoardTrigger = Type.Object({
     Mode: Type.Literal('Board'),
@@ -30,11 +31,11 @@ const ChannelTrigger = Type.Object({
     description: 'A channel is opened when a SAR CoreEvent is created in the Channel and archived when the Event is deleted'
 });
 
-const Trigger = Type.Union([BoardTrigger, ChannelTrigger], {
+const TriggerSchema = Type.Union([BoardTrigger, ChannelTrigger], {
     description: 'What starts the Slack flow'
 });
 
-type Trigger = Static<typeof Trigger>;
+type Trigger = Static<typeof TriggerSchema>;
 
 const OutgoingInput = Type.Object({
     'SLACK_TOKEN': Type.String({
@@ -63,7 +64,7 @@ const OutgoingInput = Type.Object({
     'SLACK_ANNOUNCE': Type.Optional(Type.String({
         description: 'Main channel (ID - ie: C012AB3CD - or #name) where an incident message linking to the incident channel is posted whenever one is opened or reopened - the token User must be a member of it'
     })),
-    'TRIGGER': Trigger,
+    'TRIGGER': TriggerSchema,
     'SAR_TYPES': Type.Array(Type.Object({
         type: Type.String({ description: 'MIL-STD-2525E Symbol ID' })
     }), {
@@ -85,7 +86,7 @@ const InteractionBody = Type.Object({
 const StoredInput = Type.Composite([
     Type.Omit(OutgoingInput, ['TRIGGER']),
     Type.Object({
-        'TRIGGER': Type.Optional(Trigger),
+        'TRIGGER': Type.Optional(TriggerSchema),
         'BOARD': Type.Optional(Type.String())
     })
 ]);
@@ -105,7 +106,7 @@ type Context = {
     trigger: Trigger;
     types: Set<string>;
     channels: Record<string, string>;
-    announcements: Record<string, Announcement>;
+    announcements: Partial<Record<string, Announcement>>;
     slack: Slack;
     incidents: Incidents;
     coreEvents: CoreEvents;
@@ -131,9 +132,9 @@ export default class Task extends ETL {
     ): Promise<TSchema> {
         if (flow === DataFlowType.Outgoing && type === SchemaType.Input) {
             return OutgoingInput;
-        } else {
-            return Type.Object({});
         }
+
+        return Type.Object({});
     }
 
     /**
@@ -141,7 +142,8 @@ export default class Task extends ETL {
      * verified against the Signing Secret over the raw body, then acted on as the Layer
      */
     static webhooks = async function(schema: Schema, base: ETL): Promise<void> {
-        const task = base as Task;
+        if (!(base instanceof Task)) throw new TypeError('Webhooks require a Task instance');
+        const task = base;
 
         await schema.get('/:webhookid', {
             name: 'Webhook Healthcheck',
@@ -167,8 +169,8 @@ export default class Task extends ETL {
                 status: Type.Integer(),
                 message: Type.String()
             })
-        }, async (req, res) => {
-            try {
+        }, (req, res) => {
+            const interact = async (): Promise<void> => {
                 const env = await task.env(StoredInput, DataFlowType.Outgoing);
 
                 if (!env.SLACK_SIGNING_SECRET) {
@@ -192,13 +194,15 @@ export default class Task extends ETL {
 
                 await new Interactions(slack, new CoreEvents(task), (msg: string) => {
                     if (env.DEBUG) console.log(`ok - debug - ${msg}`);
-                }).handle(task.type(BlockActions, payload));
+                }).handle(task.type(BlockActionsSchema, payload));
 
                 res.json({ status: 200, message: 'ok' });
-            } catch (err) {
+            };
+
+            interact().catch((err: unknown) => {
                 console.error('not ok - Slack interaction failed:', err);
                 res.status(500).json({ status: 500, message: err instanceof Error ? err.message : String(err) });
-            }
+            });
         });
     };
 
@@ -206,7 +210,7 @@ export default class Task extends ETL {
         const env = await this.env(StoredInput, DataFlowType.Outgoing);
         const ephem = await this.ephemeral(EphemeralStore, DataFlowType.Outgoing);
 
-        const trigger: Trigger | undefined = env.TRIGGER || (env.BOARD ? { Mode: 'Board', BOARD: env.BOARD } : undefined);
+        const trigger: Trigger | undefined = env.TRIGGER ?? (env.BOARD ? { Mode: 'Board', BOARD: env.BOARD } : undefined);
         if (!trigger) throw new Error('TRIGGER is not configured');
 
         const slack = new Slack(env.SLACK_TOKEN);
@@ -214,8 +218,8 @@ export default class Task extends ETL {
         const ctx: Context = {
             trigger,
             types: new Set(env.SAR_TYPES.map((t) => t.type)),
-            channels: ephem.channels || {},
-            announcements: ephem.announcements || {},
+            channels: ephem.channels ?? {},
+            announcements: ephem.announcements ?? {},
             slack,
             incidents: new Incidents(slack, {
                 api: this.etl.api,
@@ -261,7 +265,7 @@ export default class Task extends ETL {
      * when the Event qualifies for the trigger - so a missed or failed message is recovered by the next update
      */
     async event(ctx: Context, message: Static<typeof OutgoingEventMessage>): Promise<void> {
-        const incident = this.type(IncidentEvent, message.data);
+        const incident = this.type(IncidentEventSchema, message.data);
         const known = ctx.channels[incident.id];
 
         ctx.debug(`event ${incident.id} ${message.action} type=${incident.type} name=${incident.name} channels=[${message.channels.join(',')}]`);
@@ -285,7 +289,7 @@ export default class Task extends ETL {
             const info = await ctx.slack.info(known);
 
             if (info && !info.is_archived) {
-                ctx.debug(`event ${incident.id} updated, rewriting the pinned message & bookmarking ${(incident.links || []).length} link(s) in ${known}`);
+                ctx.debug(`event ${incident.id} updated, rewriting the pinned message & bookmarking ${(incident.links ?? []).length} link(s) in ${known}`);
                 await ctx.incidents.status(known, incident);
                 await ctx.incidents.bookmark(known, incident.links);
                 await this.reannounce(ctx, incident, info);
@@ -325,12 +329,12 @@ export default class Task extends ETL {
         } else {
             const board = ctx.trigger.BOARD;
 
-            if (!(incident.boards || []).some((b) => b.id === board && b.column)) {
+            if (!(incident.boards ?? []).some((b) => b.id === board && !!b.column)) {
                 return `is not placed on board ${board}`;
             }
         }
 
-        if (ctx.types.size && !ctx.types.has(incident.type)) {
+        if (ctx.types.size > 0 && !ctx.types.has(incident.type)) {
             return `type ${incident.type} is not in SAR_TYPES`;
         }
 
@@ -356,7 +360,7 @@ export default class Task extends ETL {
             return;
         }
 
-        if (ctx.types.size && !ctx.types.has(placement.event.type)) {
+        if (ctx.types.size > 0 && !ctx.types.has(placement.event.type)) {
             ctx.debug(`skip - type ${placement.event.type} is not in SAR_TYPES`);
             return;
         }
@@ -480,6 +484,6 @@ export default class Task extends ETL {
 const options = { webhooks: { rawBody: true } };
 
 await local(await Task.init(import.meta.url, options), import.meta.url);
-export async function handler(event: Event = {}, context?: object) {
-    return await internal(new Task(import.meta.url, options), event, context);
+export async function handler(event: Event = {}, context?: object): ReturnType<typeof internal> {
+    return internal(new Task(import.meta.url, options), event, context);
 }

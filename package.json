@@ -6,23 +6,22 @@
     "description": "",
     "main": "task.ts",
     "scripts": {
-        "lint": "eslint task.ts lib/ test/",
+        "lint": "oxlint --type-aware --deny-warnings --report-unused-disable-directives",
         "build": "tsc --build",
         "test": "tsx --test test/*.ts"
     },
     "author": "Nicholas Ingalls <nicholas.ingalls@state.co.us>",
     "license": "ISC",
     "devDependencies": {
-        "@eslint/js": "^10.0.0",
-        "@types/aws-lambda": "^8.10.163",
-        "eslint": "^10.0.0",
-        "tsx": "^4.23.12",
-        "typescript": "^6.0.0",
-        "typescript-eslint": "^8.0.0"
+        "@types/aws-lambda": "^8.10.164",
+        "oxlint": "^1.94.0",
+        "oxlint-tsgolint": "^7.0.2007",
+        "tsx": "^4.23.15",
+        "typescript": "^7.0.2"
     },
     "dependencies": {
-        "@openaddresses/batch-schema": "^10.19.0",
-        "@sinclair/typebox": "^0.34.0",
-        "@tak-ps/etl": "^10.26.0"
+        "@openaddresses/batch-schema": "^10.31.0",
+        "@sinclair/typebox": "^0.34.52",
+        "@tak-ps/etl": "^11.3.1"
     }
 }

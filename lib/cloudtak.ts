@@ -10,7 +10,7 @@ export const CoreEventLink = Type.Object({
 export type Link = Static<typeof CoreEventLink>;
 
 // Subset of CloudTAK's CoreEventResponse this task relies on - carried by event:<action> messages
-export const IncidentEvent = Type.Object({
+export const IncidentEventSchema = Type.Object({
     id: Type.String(),
     name: Type.String(),
     type: Type.String(),
@@ -30,13 +30,13 @@ export const IncidentEvent = Type.Object({
     })
 });
 
-export type IncidentEvent = Static<typeof IncidentEvent>;
+export type IncidentEvent = Static<typeof IncidentEventSchema>;
 
 // Subset of CloudTAK's CoreEventBoardEventResponse this task relies on
 export const Placement = Type.Object({
     id: Type.String(),
     board: Type.String(),
-    event: IncidentEvent
+    event: IncidentEventSchema
 });
 
 const CoreEventLinks = Type.Object({
@@ -54,7 +54,7 @@ const AssignmentList = Type.Object({
     items: Type.Array(Assignment)
 });
 
-export const Priority = Type.Union([
+export const PrioritySchema = Type.Union([
     Type.Literal('none'),
     Type.Literal('low'),
     Type.Literal('medium'),
@@ -62,7 +62,7 @@ export const Priority = Type.Union([
     Type.Literal('critical')
 ]);
 
-export type Priority = Static<typeof Priority>;
+export type Priority = Static<typeof PrioritySchema>;
 
 /** Has the Event ended - a future `ended` keeps it active until then */
 export function closed(event: Pick<IncidentEvent, 'ended'>): boolean {
@@ -116,7 +116,7 @@ export default class CoreEvents {
             return !current.links.some((l) => l.url === link.url || l.name === link.name);
         });
 
-        if (!missing.length) return;
+        if (missing.length === 0) return;
 
         await this.task.fetch(`/api/core/event/${event}`, {
             method: 'PATCH',

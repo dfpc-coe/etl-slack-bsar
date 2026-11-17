@@ -3,7 +3,7 @@ import { Type } from '@sinclair/typebox';
 import type { Static } from '@sinclair/typebox';
 import type Slack from './slack.js';
 import type CoreEvents from './cloudtak.js';
-import { Priority } from './cloudtak.js';
+import { PrioritySchema } from './cloudtak.js';
 
 /** Slack rejects interactions signed more than five minutes ago as replays */
 const MAX_AGE = 5 * 60;
@@ -16,7 +16,7 @@ export const Action = {
     Priority: 'incident:priority'
 } as const;
 
-export const BlockActions = Type.Object({
+export const BlockActionsSchema = Type.Object({
     type: Type.Literal('block_actions'),
     user: Type.Object({
         id: Type.String(),
@@ -32,7 +32,7 @@ export const BlockActions = Type.Object({
     }))
 });
 
-export type BlockActions = Static<typeof BlockActions>;
+export type BlockActions = Static<typeof BlockActionsSchema>;
 
 /**
  * Check the Slack signature of an interaction - v0=HMAC-SHA256(secret, "v0:<timestamp>:<raw body>")
@@ -105,7 +105,7 @@ export default class Interactions {
             await this.coreEvents.setActive(event, true);
             await this.slack.respond(payload.response_url, `${mention} reopened this incident`, { inChannel: true });
         } else if (actionId === Action.Priority) {
-            const priority = this.coreEvents.task.type(Priority, argument);
+            const priority = this.coreEvents.task.type(PrioritySchema, argument);
 
             await this.coreEvents.setPriority(event, priority);
             await this.slack.respond(payload.response_url, `${mention} set the priority to ${priority}`, { inChannel: true });
